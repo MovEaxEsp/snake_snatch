@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+    <!--<script type="text/javascript" src="http://localhost:8000/pkg/res_type_rant.js" ></script>-->
+    <style>
+      #canvasHolder {
+        aspect-ratio: 16/9;
+        width: 80%;
+      }
+    </style>
+     <!--<script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@latest"></script>-->
+
+     <!-- when using the mode "code", it's important to specify charset utf-8 -->
+    <meta charset="utf-8">
+
+  
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.1.3/jsoneditor.min.css" integrity="sha512-8G+Vb2+10BSrSo+wupdzJIylDLpGtEYniQhp0rsbTigPG7Onn2S08Ai/KEGlxN2Ncx9fGqVHtRehMuOjPb9f8g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/10.1.3/jsoneditor.min.js" integrity="sha512-nSq28mOI6mPYnThjsLomwt5wbRkx66HV+o9g4s3EsJkQqqGmgsi2Qq7Y53PiEw7UQXx5ojddxaTYhBCq5ct/Pg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdn.jsdelivr.net/npm/deep-diff@1/dist/deep-diff.min.js"></script>
+
+</head>
+
+<body>
+
+<script type="module">
+      const NO_INTERNET = false;
+      // Use ES module import syntax to import functionality from the module
+      // that we have compiled.
+      //
+      // Note that the `default` import is an initialization function which
+      // will "boot" the module and make it ready to use. Currently browsers
+      // don't support natively imported WebAssembly as an ES module, but
+      // eventually the manual initialization won't be required!
+      import init, { run_frame, handle_mouse_event, init_state, default_config, resource_names, update_config } from './pkg/snake_snatch.js';
+
+      let startGameFn = null;
+
+      async function run() {
+        // First up we need to actually load the Wasm file, so we use the
+        // default export to inform it where the Wasm file is located on the
+        // server, and then we wait on the returned promise to wait for the
+        // Wasm to be loaded.
+        //
+        // It may look like this: `await init('./pkg/without_a_bundler_bg.wasm');`,
+        // but there is also a handy default inside `init` function, which uses
+        // `import.meta` to locate the Wasm file relatively to js file.
+        //
+        // Note that instead of a string you can also pass in any of the
+        // following things:
+        //
+        // * `WebAssembly.Module`
+        //
+        // * `ArrayBuffer`
+        //
+        // * `Response`
+        //
+        // * `Promise` which returns any of the above, e.g. `fetch("./path/to/wasm")`
+        //
+        // This gives you complete control over how the module is loaded
+        // and compiled.
+        //
+        // Also note that the promise, when resolved, yields the Wasm module's
+        // exports which is the same as importing the `*_bg` module in other
+        // modes
+        await init();
+
+        const resources = resource_names();
+
+        const images = {};
+        
+        const loadPromises = [];
+        resources.images.forEach(name => {
+          let img = new Image()
+
+          let imgPromise = new Promise((resolve, _) => {
+            img.onload = resolve;
+          });
+          loadPromises.push(imgPromise);
+
+          img.src = `./images/${name}`;
+          images[name] = img;
+
+        });
+
+        let audioCtx = new AudioContext();
+
+        let sounds = {};
+        resources.sounds.forEach(name => {
+          loadPromises.push(
+            window.fetch(`./audio/${name}`).then(async (response) => {
+              if (!response.ok) {
+                throw new Error(`Failed loading ${name}`);
+              }
+
+              let arrayBuf = await response.arrayBuffer();
+              sounds[name] = await audioCtx.decodeAudioData(arrayBuf);
+            })
+          );
+        });
+
+        // Return promise that will resolve to the downloaded content
+        function downloadDoc(url) {
+          var xmlHttp = new XMLHttpRequest();
+
+          let promise = new Promise((resolve, fail) => {
+            xmlHttp.onreadystatechange = () => {
+              if (xmlHttp.readyState == 4 && xmlHttp.status == 200) {
+                resolve(xmlHttp.responseText);
+              }
+            }
+          })
+
+          xmlHttp.open("GET", url, true); // true for asynchronous 
+          xmlHttp.send(null);
+
+          return promise;
+        }
+
+        if (NO_INTERNET) { // hard-coded words for local dev with no internet
+        }
+
+        await Promise.all(loadPromises);
+
+        let editingConfig = false;
+
+        let gameConfig = {...default_config(), ...{
+        }};
+
+        let originalCfg = JSON.parse(JSON.stringify(gameConfig));
+
+        let updateConfigCb = (cfg) => {
+            let newCfg = JSON.parse(cfg);
+            Object.assign(gameConfig, newCfg);
+            update_config(newCfg);
+            if (!NO_INTERNET) {
+              document.getElementById("diffArea").value = JSON.stringify(DeepDiff(originalCfg, newCfg), null, 2);
+            }
+        };
+
+        // Show config in textarea
+        let cfgInput = document.getElementById("config");
+        cfgInput.value = JSON.stringify(gameConfig, null, 2);
+        cfgInput.addEventListener("change", event => {
+          updateConfigCb(cfgInput.value);
+        });
+        cfgInput.addEventListener("focus", event => {
+          editingConfig = true;
+        });
+        cfgInput.addEventListener("blur", event => {
+          editingConfig = false;
+        });
+
+        // Show config in json editor
+        if (!NO_INTERNET) {
+          const container = document.getElementById("jsoneditor")
+          const options = {
+            onFocus: () => {
+              editingConfig = true;
+            },
+            onBlur: () => {
+              editingConfig = false;
+            },
+            onChangeText: updateConfigCb,
+          };
+          const editor = new JSONEditor(container, options)
+
+          editor.set(gameConfig);
+        }
+
+        let canvasDiv = document.getElementById("canvasHolder");
+
+        let canvas = document.getElementById("canvas");
+        canvas.width = canvasDiv.clientWidth;
+        canvas.height = canvasDiv.clientHeight;
+
+        function emit_mouse_event(eventName, mouseEvent) {
+          let canvas_rect = canvas.getBoundingClientRect();
+          let rust_event = {
+            event_type: eventName,
+            pos: {
+              x: mouseEvent.clientX - canvas_rect.left,
+              y: mouseEvent.clientY - canvas_rect.top,
+            }
+          };
+          handle_mouse_event(rust_event);
+        };
+
+        // Hook up mouse events
+        canvas.addEventListener("mouseup", e => emit_mouse_event("Up", e));
+        canvas.addEventListener("mousedown", e => emit_mouse_event("Down", e));
+        canvas.addEventListener("mousemove", e => emit_mouse_event("Move", e));
+
+        //canvas = document.getElementById("myCanvas");
+        startGameFn = () => {
+          init_state(gameConfig, canvas, images, audioCtx, sounds);
+        };
+
+        startGameFn();
+
+        document.getElementById("restartButton").addEventListener("click", startGameFn);
+
+        //canvas.width = screen.width;
+        //canvas.height = screen.height;
+        //canvas.addEventListener('mousedown', handleMouseDown, false);
+        //canvas.addEventListener('mousemove', handleMouseMove, false);
+        //cRect = canvas.getBoundingClientRect();
+        //ctx = canvas.getContext("2d");
+
+        // And afterwards we can use all the functionality defined in wasm.
+        //greet();
+        //add_test(5, 6);
+
+        // Run at 30 FPS
+        setInterval(function() { run_frame(); }, 1000/30);
+      }
+
+      run();
+</script>
+
+<div id="canvasHolder">
+  <canvas id="canvas" style="border: 1px solid black;height:100%;width:100%"></canvas>
+</div>
+
+<button type="button" id="restartButton">Restart</button>
+<div id="jsoneditor" style="width: 400px; height: 400px;"></div>
+
+<textarea id="config" rows="20" cols="80"> </textarea>
+
+<textarea id="diffArea" rows="20", cols="80"></textarea>
+
+<!--<div id="editorjs" style="border: 1px solid black; height:200px;width:500px"></div>-->
+
+
+<!--<canvas id="canvas" style="border: 1px solid black" width="1920" height="1080"></canvas>-->
+</body>
+</html>

@@ -1,0 +1,47 @@
+[package]
+name = "snake_snatch"
+description = "A dueling snakes game"
+repository = "github:MovEaxEsp/snake_snatch"
+license = "Idk"
+version = "0.1.0"
+authors = ["Pawel Grzech <pgrzech1@bloomberg.net>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+wasm-bindgen = { version = "0.2" }
+serde-wasm-bindgen = "0.4"
+engine_p = { path = "../engine_p" }
+
+# The `console_error_panic_hook` crate provides better debugging of panics by
+# logging them with `console.error`. This is great for development, but requires
+# all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
+# code size when deploying.
+console_error_panic_hook = { version = "0.1.7", optional = true }
+serde_with = "3.12.0"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.34"
+
+[dependencies.web-sys]
+version = "0.3.77"
+features = ['AudioBuffer', 'AudioBufferSourceNode', 'AudioContext', 'AudioDestinationNode', 'BaseAudioContext',
+            'CanvasRenderingContext2d', 'Document', 'Element', 'HtmlCanvasElement', 'HtmlImageElement',
+            'Window', 'Crypto', 'OffscreenCanvas', 'OffscreenCanvasRenderingContext2d', 'CanvasGradient',
+            'ImageData', 'TextMetrics']
+
+[dependencies.js-sys]
+version = "0.3.77"
+
+[dependencies.web-time]
+version = "1.1.0"
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"
