@@ -1,7 +1,5 @@
 extern crate engine_p;
 
-use crate::images::{Image, Images, ImagesConfig};
-
 use engine_p::interpolable::{Interpolable, Pos2d};
 
 use serde::{Serialize,Deserialize};
@@ -50,7 +48,6 @@ pub struct RingConfig {
 
 pub struct Painter {
     canvas: OffscreenCanvasRenderingContext2d,
-    images: Images,
     entered_keywords: Vec<String>,
     keyword_r: Interpolable<f64>,
     keyword_g: Interpolable<f64>,
@@ -59,10 +56,9 @@ pub struct Painter {
 
 impl Painter {
 
-    pub fn new(images: Images, canvas: OffscreenCanvasRenderingContext2d) -> Self {
+    pub fn new(canvas: OffscreenCanvasRenderingContext2d) -> Self {
         Painter {
             canvas: canvas,
-            images: images,
             entered_keywords: Vec::new(),
             keyword_r: Interpolable::new(72.0, 111.0),
             keyword_g: Interpolable::new(23.0, 79.0),
@@ -90,14 +86,6 @@ impl Painter {
 
     pub fn set_global_alpha(&self, alpha: f64) {
         self.canvas.set_global_alpha(alpha);
-    }
-
-    pub fn draw_image(&self, image: &Image, pos: &Pos2d) {
-        self.images.draw_image(&self.canvas, image, pos.x, pos.y);
-    }
-
-    pub fn draw_gray_image(&self, image: &Image, pos: &Pos2d) {
-        self.images.draw_gray_image(&self.canvas, image, pos.x, pos.y);
     }
 
     pub fn draw_area_background(&self, pos: &Pos2d, cfg: &BackgroundConfig) {
@@ -261,16 +249,14 @@ impl Painter {
         self.canvas.set_global_alpha(1.0);
     }
 
+    /*
     pub fn update_config(&mut self, cfg_ui_images: &ImagesConfig) {
-        self.images.update_config(cfg_ui_images);
+        //self.images.update_config(cfg_ui_images);
     }
+    */
 
     pub fn entered_keywords(&mut self) -> &mut Vec<String>{
         &mut self.entered_keywords
-    }
-
-    pub fn images<'a>(&'a self) -> &'a Images {
-        &self.images
     }
 
     pub fn canvas(&self) -> &OffscreenCanvasRenderingContext2d {

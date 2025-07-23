@@ -1,22 +1,19 @@
-mod images;
+mod network;
 mod painter;
-mod sounds;
 mod traits;
 mod utils;
 
 use engine_p::interpolable::{Interpolable, Pos2d};
-use images::{Images, ImagesConfig};
+use network::{NetworkHandle, NetworkManager, NetReq, NetUpdate};
 use painter::{Painter, TextConfig};
 use serde::{Serialize,Deserialize};
-use sounds::{Sounds, SoundsConfig};
-use traits::BaseGame;
+use traits::{BaseGame, NetMsg};
 use utils::set_panic_hook;
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
 use web_time::Instant;
 
 use std::cell::RefCell;
-use std::rc::Rc;
 
 #[wasm_bindgen]
 extern "C" {
@@ -39,8 +36,6 @@ pub struct MouseEvent {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct UiConfig {
-    pub images: ImagesConfig,
-    pub sounds: SoundsConfig,
     pub fps: TextConfig,
     pub arena_color: String,
     pub arena_pos: Pos2d,
@@ -61,24 +56,19 @@ pub struct OuterConfig {
 
 ///////// GameState
 struct GameImp {
-    cur_money: RefCell<i32>,
     painter: Painter,
-    sounds: Sounds,
+    network: NetworkManager<NetMsg>,
     config: OuterConfig,
     elapsed_time: f64,  // seconds since previous frame start (for calculating current frame)
 }
 
 impl BaseGame for GameImp {
-    fn get_money(&self) -> i32 {
-        *self.cur_money.borrow()
-    }
-
     fn painter<'a>(&'a self) -> &'a Painter {
         &self.painter
     }
-
-    fn sounds(&self) -> &Sounds {
-        &self.sounds
+    
+    fn network(&mut self) -> &mut NetworkManager<NetMsg> {
+        &mut self.network
     }
 
     fn elapsed_time(&self) -> f64 {
@@ -102,6 +92,9 @@ struct GameState {
     snake_points: Vec<Pos2d>,
     is_mouse_down: bool,
     mouse_pos: Pos2d,
+    listen_handle: NetworkHandle,
+    client_handle: NetworkHandle,
+    connect_handle: NetworkHandle,
 }
 
 impl GameState {
@@ -122,6 +115,20 @@ impl GameState {
             let fps = frames_per_update as f64/elapsed_time;
             let processing_pct = (processing_time/elapsed_time) * 100.0;
             self.fps_str = format!("{:.2} FPS ({:2.2} %)", fps, processing_pct);
+        }
+        
+        // Check for network messages
+        for msg in self.imp.network().get_handle_events(self.listen_handle).into_iter() {
+            log(&format!("Listen event: {:?}", msg));
+            if let NetUpdate::NewPeer(new_corr) = msg {
+                self.client_handle = NetworkHandle::from_correlator(new_corr);
+            }
+        }
+        for msg in self.imp.network().get_handle_events(self.connect_handle).into_iter() {
+            log(&format!("Connect event: {:?}", msg));
+        }
+        for msg in self.imp.network().get_handle_events(self.client_handle).into_iter() {
+            log(&format!("Client event: {:?}", msg));
         }
 
         self.imp.think();
@@ -190,7 +197,7 @@ impl GameState {
 
     fn update_config(&mut self, cfg: &OuterConfig) {
         self.imp.config = cfg.clone();
-        self.imp.painter.update_config(&cfg.ui.images);
+        //self.imp.painter.update_config(&cfg.ui.images);
     }
     
     fn handle_mouse_event(&mut self, mut evt: MouseEvent) {
@@ -205,6 +212,12 @@ impl GameState {
         
         if evt.event_type == MouseEventType::Up {
             self.is_mouse_down = false;
+            if self.connect_handle != NetworkHandle::invalid() {
+                self.imp.network().send(self.connect_handle, NetMsg::SnakePos((evt.pos.x as i32, evt.pos.y as i32)));
+            }
+            if self.client_handle != NetworkHandle::invalid() {
+                self.imp.network().send(self.client_handle, NetMsg::SnakePos((evt.pos.x as i32, evt.pos.y as i32)));
+            }
         }
         else if evt.event_type == MouseEventType::Down {
             self.is_mouse_down = true;
@@ -219,17 +232,22 @@ impl GameState {
                 self.snake_points.push(*self.snake_points.last().unwrap());
             }
         }
-
-        log(&format!("Snake parts: {:?}", self.snake_points));
-
+    }
+    
+    fn be_host(&mut self) {
+        self.listen_handle = self.imp.network().listen("moveaxesp-snake-snatch-game");
+    }
+    
+    fn be_client(&mut self) {
+        self.connect_handle = self.imp.network().connect("moveaxesp-snake-snatch-game");        
     }
 
 }
 
-static mut S_STATE: Option<Rc<RefCell<GameState>>> = None;
+static mut S_STATE: RefCell<Option<GameState>> = RefCell::new(None);
 
 #[wasm_bindgen]
-pub fn init_state(config: JsValue, canvas: JsValue, images: JsValue, audio_ctx: JsValue, sounds: JsValue) {
+pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx: JsValue, _sounds: JsValue) {
     set_panic_hook();
     
     let game_config: OuterConfig = serde_wasm_bindgen::from_value(config).unwrap();
@@ -240,16 +258,11 @@ pub fn init_state(config: JsValue, canvas: JsValue, images: JsValue, audio_ctx: 
 
     let screen_canvas= canvas.dyn_into::<HtmlCanvasElement>().expect("canvas");
 
-    let painter_images = Images::new(images, &game_config.ui.images);
-
-    let painter = Painter::new(painter_images, offscreen_context);
-
-    let sounds = Sounds::new(audio_ctx, sounds, &game_config.ui.sounds);
+    let painter = Painter::new(offscreen_context);
 
     let game_imp = GameImp {
-        cur_money: RefCell::new(0),
         painter: painter,
-        sounds: sounds,
+        network: NetworkManager::new(),
         config: game_config,
         elapsed_time: 0.0,
     };
@@ -264,34 +277,42 @@ pub fn init_state(config: JsValue, canvas: JsValue, images: JsValue, audio_ctx: 
         snake_points: vec![(200, 200).into(), (300, 300).into()],
         is_mouse_down: false,
         mouse_pos: (0, 0).into(),
+        listen_handle: NetworkHandle::invalid(),
+        connect_handle: NetworkHandle::invalid(),
+        client_handle: NetworkHandle::invalid(),
     };
 
     state.frame_times.push((Instant::now(), Instant::now()));
 
     unsafe {
-        S_STATE = Some(Rc::new(RefCell::new(state)));
+        #[allow(static_mut_refs)]
+        S_STATE.get_mut().replace(state);
     }
     
 }
 
-fn run_frame_imp(state_rc: &Rc<RefCell<GameState>>) {
-    let mut state = state_rc.borrow_mut();
-
+fn run_frame_imp(state: &mut GameState) {
     let now = Instant::now();
     state.frame_times.push((now, now));
-
+    
+    #[derive(Deserialize)]
+    struct FrameInfo {
+        network: Vec<NetUpdate<NetMsg>>,
+    }
+    
     state.think();
     state.draw();
-
+    
     state.frame_times.last_mut().unwrap().1 = Instant::now();
 }
 
 #[wasm_bindgen]
-pub fn run_frame() {
+pub fn run_frame(){
     unsafe {
         #[allow(static_mut_refs)]
-        let state: &Rc<RefCell<GameState>> = S_STATE.as_mut().unwrap();
-        run_frame_imp(state);
+        if let Some(state) = &mut *S_STATE.borrow_mut() {
+            run_frame_imp(state);
+        }
     }
 }
 
@@ -301,8 +322,9 @@ pub fn handle_mouse_event(event: JsValue) {
         Ok(evt) => {
             unsafe {
                 #[allow(static_mut_refs)]
-                let state: &Rc<RefCell<GameState>> = S_STATE.as_mut().unwrap();
-                state.borrow_mut().handle_mouse_event(evt);
+                if let Some(state) = &mut *S_STATE.borrow_mut() {
+                    state.handle_mouse_event(evt);
+                }
             }
         }
         Err(e) => {
@@ -314,8 +336,6 @@ pub fn handle_mouse_event(event: JsValue) {
 pub fn build_default_config() -> OuterConfig {
     OuterConfig {
         ui: UiConfig {
-            images: Images::default_config(),
-            sounds: Sounds::default_config(),
             fps: TextConfig {
                 offset: (0, 0).into(),
                 stroke: false,
@@ -348,8 +368,9 @@ pub fn update_config(config: JsValue) {
         Ok(cfg) => {
             unsafe {
                 #[allow(static_mut_refs)]
-                let state: &Rc<RefCell<GameState>> = S_STATE.as_mut().unwrap();
-                state.borrow_mut().update_config(&cfg);
+                if let Some(state) = &mut *S_STATE.borrow_mut() {
+                    state.update_config(&cfg);
+                }
             }
         }
         Err(e) => {
@@ -359,19 +380,21 @@ pub fn update_config(config: JsValue) {
 }
 
 #[wasm_bindgen]
-pub fn resource_names() -> JsValue {
-    #[derive(Serialize)]
-    pub struct ResourceList {
-        pub images: Vec<String>,
-        pub sounds: Vec<String>,
+pub fn be_host() {
+    unsafe {
+        #[allow(static_mut_refs)]
+        if let Some(state) = &mut *S_STATE.borrow_mut() {
+            state.be_host();
+        }
     }
+}
 
-    let cfg = build_default_config();
-
-    let resources = ResourceList {
-        images: cfg.ui.images.images.iter().map(|img| img.image_name.clone()).collect(),
-        sounds: cfg.ui.sounds.sounds.iter().flat_map(|snd| snd.sound_names.iter().cloned()).collect(),
-    };
-
-    serde_wasm_bindgen::to_value(&resources).unwrap()
+#[wasm_bindgen]
+pub fn be_client() {
+    unsafe {
+        #[allow(static_mut_refs)]
+        if let Some(state) = &mut *S_STATE.borrow_mut() {
+            state.be_client();
+        }
+    }
 }

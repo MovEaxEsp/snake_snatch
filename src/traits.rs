@@ -1,17 +1,24 @@
 
 use crate::painter::Painter;
-use crate::sounds::Sounds;
+use crate::network::NetworkManager;
+
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum NetMsg {
+    SnakePos((i32, i32)),
+}
 
 pub trait BaseGame {
     //fn set_global_alpha(&self, alpha: f64);
 
-    fn get_money(&self) -> i32;
-
     //fn images<'a>(&'a self) -> &'a Images;
 
     fn painter<'a>(&'a self) -> &'a Painter;
+    
+    fn network(&mut self) -> &mut NetworkManager<NetMsg>;
 
-    fn sounds(&self) -> &Sounds;
+    //fn sounds(&self) -> &Sounds;
 
     //fn image_props<'a>(&'a self, image: &Image) -> &'a ImageProps;
 
