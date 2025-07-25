@@ -1,12 +1,14 @@
 mod network;
 mod painter;
+mod snake;
 mod traits;
 mod utils;
 
-use engine_p::interpolable::{Interpolable, Pos2d};
-use network::{NetworkHandle, NetworkManager, NetReq, NetUpdate};
+use engine_p::interpolable::{Pos2d};
+use network::{NetworkHandle, NetworkManager, NetUpdate};
 use painter::{Painter, TextConfig};
 use serde::{Serialize,Deserialize};
+use snake::{Snake, SnakeConfig};
 use traits::{BaseGame, NetMsg};
 use utils::set_panic_hook;
 use wasm_bindgen::prelude::*;
@@ -45,7 +47,7 @@ pub struct UiConfig {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameConfig {
-    pub snake_grow_speed: f64,
+    pub snake: SnakeConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -59,6 +61,8 @@ struct GameImp {
     painter: Painter,
     network: NetworkManager<NetMsg>,
     config: OuterConfig,
+    is_mouse_down: bool,
+    mouse_pos: Pos2d,
     elapsed_time: f64,  // seconds since previous frame start (for calculating current frame)
 }
 
@@ -73,6 +77,14 @@ impl BaseGame for GameImp {
 
     fn elapsed_time(&self) -> f64 {
         self.elapsed_time
+    }
+    
+    fn mouse_pos(&self) -> Pos2d {
+        self.mouse_pos
+    }
+    
+    fn is_mouse_down(&self) -> bool {
+        self.is_mouse_down
     }
 }
 
@@ -89,9 +101,7 @@ struct GameState {
     frame_times: Vec<(Instant, Instant)>, // for measuring elapsed_time, fps
     fps_str: String,
     imp: GameImp,
-    snake_points: Vec<Pos2d>,
-    is_mouse_down: bool,
-    mouse_pos: Pos2d,
+    snake: Snake,
     listen_handle: NetworkHandle,
     client_handle: NetworkHandle,
     connect_handle: NetworkHandle,
@@ -133,27 +143,7 @@ impl GameState {
 
         self.imp.think();
         
-        // Update the size of our snake depending on if mouse is down or up
-        let snake_intr = Interpolable::new(*self.snake_points.last().unwrap(), self.imp.config.game.snake_grow_speed);
-        if self.is_mouse_down && self.mouse_pos != *self.snake_points.last().unwrap() {
-            // Grow the snake towards the mouse
-            snake_intr.set_end(self.mouse_pos);
-            snake_intr.advance(self.imp.elapsed_time);
-            *self.snake_points.last_mut().unwrap() = snake_intr.cur();
-        }
-        else if !self.is_mouse_down && self.snake_points.len() > 2 {
-            // Shrink the snake while the mouse is up
-            let segment_start = self.snake_points[self.snake_points.len()-2];
-            snake_intr.set_end(segment_start);
-            snake_intr.advance(self.imp.elapsed_time);
-            let cur = snake_intr.cur();
-            if cur == segment_start {
-                self.snake_points.pop();
-            }
-            else {
-                *self.snake_points.last_mut().unwrap() = cur;
-            }
-        }
+        self.snake.think(&self.imp, &self.imp.config.game.snake);
     }
 
     fn draw(&self) {
@@ -168,16 +158,7 @@ impl GameState {
         canvas.set_fill_style_str(&cfg.arena_color);
         canvas.fill_rect(cfg.arena_pos.x, cfg.arena_pos.y, cfg.arena_width, cfg.arena_height);
         
-        // Draw the snake
-        canvas.set_stroke_style_str("black");
-        canvas.set_line_width(10.0);
-        canvas.move_to(self.snake_points[0].x, self.snake_points[0].y);
-        for pos in self.snake_points[1..].iter() {
-            canvas.line_to(pos.x, pos.y);
-            canvas.stroke();
-            canvas.begin_path();
-            canvas.move_to(pos.x, pos.y);
-        }
+        self.snake.draw(&self.imp);
         
         // Draw FPS
         self.imp.painter().draw_text(&self.fps_str, &(2000, 10).into(), 300.0, &self.imp.config.ui.fps);
@@ -211,7 +192,7 @@ impl GameState {
         evt.pos.y *= height_factor;
         
         if evt.event_type == MouseEventType::Up {
-            self.is_mouse_down = false;
+            self.imp.is_mouse_down = false;
             if self.connect_handle != NetworkHandle::invalid() {
                 self.imp.network().send(self.connect_handle, NetMsg::SnakePos((evt.pos.x as i32, evt.pos.y as i32)));
             }
@@ -220,18 +201,10 @@ impl GameState {
             }
         }
         else if evt.event_type == MouseEventType::Down {
-            self.is_mouse_down = true;
+            self.imp.is_mouse_down = true;
         }
         
-        self.mouse_pos = evt.pos;
-        
-        // On any mouse move while the mouse is down, start a new segment from wherever the last segment is,
-        // if the segment is long enough
-        if self.is_mouse_down {
-            if self.snake_points.last().unwrap().dist(self.snake_points[self.snake_points.len()-2]) > 20.0 {
-                self.snake_points.push(*self.snake_points.last().unwrap());
-            }
-        }
+        self.imp.mouse_pos = evt.pos;
     }
     
     fn be_host(&mut self) {
@@ -265,6 +238,8 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         network: NetworkManager::new(),
         config: game_config,
         elapsed_time: 0.0,
+        is_mouse_down: false,
+        mouse_pos: (0,0).into(),
     };
 
     let mut state = GameState{
@@ -274,12 +249,10 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         frame_times: Vec::new(),
         imp: game_imp,
         fps_str: "".to_string(),
-        snake_points: vec![(200, 200).into(), (300, 300).into()],
-        is_mouse_down: false,
-        mouse_pos: (0, 0).into(),
         listen_handle: NetworkHandle::invalid(),
         connect_handle: NetworkHandle::invalid(),
         client_handle: NetworkHandle::invalid(),
+        snake: Snake::new(),
     };
 
     state.frame_times.push((Instant::now(), Instant::now()));
@@ -294,11 +267,6 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
 fn run_frame_imp(state: &mut GameState) {
     let now = Instant::now();
     state.frame_times.push((now, now));
-    
-    #[derive(Deserialize)]
-    struct FrameInfo {
-        network: Vec<NetUpdate<NetMsg>>,
-    }
     
     state.think();
     state.draw();
@@ -352,7 +320,9 @@ pub fn build_default_config() -> OuterConfig {
             arena_height: 1000.0,
         },
         game: GameConfig {
-            snake_grow_speed: 100.0,
+            snake: SnakeConfig {
+                grow_speed: 100.0,
+            }
         }
     }
 }

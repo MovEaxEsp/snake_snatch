@@ -255,10 +255,6 @@ impl Painter {
     }
     */
 
-    pub fn entered_keywords(&mut self) -> &mut Vec<String>{
-        &mut self.entered_keywords
-    }
-
     pub fn canvas(&self) -> &OffscreenCanvasRenderingContext2d {
         &self.canvas
     }

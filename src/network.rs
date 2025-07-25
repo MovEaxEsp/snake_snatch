@@ -120,7 +120,6 @@ impl<MSG> PeerInfo<MSG> {
 
 struct NetworkManagerImp<MSG> {
     handle_map: HashMap<i32, PeerInfo<MSG>>,
-    pending_reqs: Vec<NetReq<MSG>>,
     next_handle: i32,
 }
 
@@ -215,7 +214,6 @@ where MSG: Serialize + DeserializeOwned + Debug + 'static {
         Self {
             imp: Rc::new(RefCell::new(NetworkManagerImp::<MSG> {
                 handle_map: HashMap::new(),
-                pending_reqs: Vec::new(),
                 next_handle: 1,
             })),
         }
