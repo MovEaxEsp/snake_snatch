@@ -1,0 +1,26 @@
+{
+  "name": "snake_snatch",
+  "type": "module",
+  "collaborators": [
+    "Pawel Grzech <pgrzech1@bloomberg.net>"
+  ],
+  "description": "A dueling snakes game",
+  "version": "0.1.0",
+  "license": "Idk",
+  "repository": {
+    "type": "git",
+    "url": "github:MovEaxEsp/snake_snatch"
+  },
+  "files": [
+    "snake_snatch_bg.wasm",
+    "snake_snatch.js",
+    "snake_snatch.d.ts",
+    "LICENSE_APACHE",
+    "LICENSE_MIT"
+  ],
+  "main": "snake_snatch.js",
+  "types": "snake_snatch.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
