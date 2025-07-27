@@ -5,11 +5,11 @@ mod traits;
 mod utils;
 
 use engine_p::interpolable::{Pos2d};
-use network::{NetworkHandle, NetworkManager, NetUpdate};
+use network::{NetData, NetworkHandle, NetworkManager, NetUpdate};
 use painter::{Painter, TextConfig};
 use serde::{Serialize,Deserialize};
 use snake::{Snake, SnakeConfig};
-use traits::{BaseGame, NetMsg};
+use traits::{BaseGame, NetMsg, SnakeIntroMsg};
 use utils::set_panic_hook;
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
@@ -64,6 +64,7 @@ struct GameImp {
     is_mouse_down: bool,
     mouse_pos: Pos2d,
     elapsed_time: f64,  // seconds since previous frame start (for calculating current frame)
+    now: f64,
 }
 
 impl BaseGame for GameImp {
@@ -86,6 +87,10 @@ impl BaseGame for GameImp {
     fn is_mouse_down(&self) -> bool {
         self.is_mouse_down
     }
+    
+    fn now(&self) -> f64 {
+        self.now
+    }
 }
 
 impl GameImp {
@@ -98,22 +103,34 @@ struct GameState {
     screen_canvas: HtmlCanvasElement,
     offscreen_canvas: OffscreenCanvas,
     got_first_input: bool,
+    game_start_instant: Instant,
     frame_times: Vec<(Instant, Instant)>, // for measuring elapsed_time, fps
     fps_str: String,
     imp: GameImp,
-    snake: Snake,
+    snakes: Vec<Snake>,
     listen_handle: NetworkHandle,
     client_handle: NetworkHandle,
     connect_handle: NetworkHandle,
+    possible_start_points:Vec<Vec<Pos2d>>,
 }
 
 impl GameState {
-    fn think(&mut self) {
+    fn consume_start_points(&mut self, start_points: &Vec<Pos2d>) -> bool {
+        for i in 0..self.possible_start_points.len() {
+            if self.possible_start_points[i] == *start_points {
+                self.possible_start_points.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
 
+    fn think(&mut self) {
         // Update frame time and FPS status
         let prev_frame = &self.frame_times[self.frame_times.len() - 2];
         let cur_frame = self.frame_times.last().unwrap();
         self.imp.elapsed_time = (cur_frame.0 - prev_frame.0).as_secs_f64();
+        self.imp.now = (cur_frame.0 - self.game_start_instant).as_secs_f64();
 
         let frames_per_update = 10;
         if self.frame_times.len() > frames_per_update + 2 {
@@ -128,22 +145,107 @@ impl GameState {
         }
         
         // Check for network messages
-        for msg in self.imp.network().get_handle_events(self.listen_handle).into_iter() {
+        for msg in self.imp.network().get_handle_events(self.listen_handle, 0).into_iter() {
             log(&format!("Listen event: {:?}", msg));
             if let NetUpdate::NewPeer(new_corr) = msg {
+                // Inform any connecting peers about possible start points
                 self.client_handle = NetworkHandle::from_correlator(new_corr);
+                self.imp.network().send(
+                    &self.client_handle,
+                    0,
+                    NetMsg::StartPointsUpdate(self.possible_start_points.clone()));
+                
+                // Inform the new client about existing snakes
+                for snake in self.snakes.iter_mut() {
+                    let new_stream = self.imp.network().new_stream_id(self.client_handle).unwrap();
+                    snake.add_peer(self.client_handle, new_stream);
+                    self.imp.network().send(
+                        &self.client_handle,
+                        0,
+                        NetMsg::SnakeIntro(SnakeIntroMsg {
+                            name: "IamHost".to_string(),
+                            snake_stream_id: new_stream,
+                            start_points: snake.get_start_points(),
+                        })
+                    );
+                }
             }
         }
-        for msg in self.imp.network().get_handle_events(self.connect_handle).into_iter() {
+        for msg in self.imp.network().get_handle_events(self.connect_handle, 0).into_iter() {
             log(&format!("Connect event: {:?}", msg));
+            match msg {
+                NetUpdate::Data(NetData{msg: NetMsg::Ping(time), ..}) => {
+                    if time > 0.0 {
+                        self.imp.network.send(&self.connect_handle, 0, NetMsg::Ping(-time));
+                    }
+                    else {
+                        log(&format!("Ping time: {}", self.imp.now() + time))
+                    }
+                },
+                NetUpdate::Data(NetData{msg: NetMsg::SnakeIntro(intro), ..}) => {
+                    self.snakes.push(Snake::new_remote(
+                        &intro.name,
+                        self.connect_handle,
+                        intro.snake_stream_id,
+                        &intro.start_points));
+                },
+                NetUpdate::Data(NetData{msg: NetMsg::StartPointsUpdate(pts), ..}) => {
+                    // TODO make more sophisticated. For now, just use the first available start points
+                    self.snakes.push(Snake::new_local(
+                        "ClientSnake",
+                        &pts[0]));
+                    let new_stream = self.imp.network().new_stream_id(self.connect_handle).unwrap();
+                    self.snakes[0].add_peer(self.connect_handle, new_stream);
+                    self.imp.network().send(
+                        &self.connect_handle,
+                        0,
+                        NetMsg::SnakeIntro(SnakeIntroMsg {
+                            name: "ClientSnake".to_string(),
+                            snake_stream_id: new_stream,
+                            start_points: pts[0].clone()
+                        })
+                    );
+                },
+                _ => {
+                    log(&format!("Unexpected msg from connect peer on stream 0. Peer: {}, msg: {:?}", self.connect_handle, msg));
+                }
+            }
         }
-        for msg in self.imp.network().get_handle_events(self.client_handle).into_iter() {
+        for msg in self.imp.network().get_handle_events(self.client_handle, 0).into_iter() {
             log(&format!("Client event: {:?}", msg));
+            match msg {
+                NetUpdate::Data(NetData{msg: NetMsg::Ping(time), ..}) => {
+                    if time > 0.0 {
+                        self.imp.network.send(&self.connect_handle, 0, NetMsg::Ping(-time));
+                    }
+                    else {
+                        log(&format!("Ping time: {}", self.imp.now() + time))
+                    }
+                },
+                NetUpdate::Data(NetData{msg: NetMsg::SnakeIntro(inner), ..}) => {
+                    self.snakes.push(Snake::new_remote(
+                        &inner.name,
+                        self.client_handle,
+                        inner.snake_stream_id,
+                        &inner.start_points));
+                    
+                    log(&format!("New remote snake, streamId: {}", inner.snake_stream_id));
+                    
+                    self.consume_start_points(&inner.start_points);
+                },
+                _ => {
+                    log(&format!("Unexpected msg from connect peer on stream 0. Peer: {}, msg: {:?}", self.connect_handle, msg));
+                }
+            }
         }
 
         self.imp.think();
         
-        self.snake.think(&self.imp, &self.imp.config.game.snake);
+        let snake_cfg = self.imp.config.game.snake.clone();
+        
+        for s in self.snakes.iter_mut() {
+            s.think(&mut self.imp, &snake_cfg);
+        }
     }
 
     fn draw(&self) {
@@ -158,7 +260,9 @@ impl GameState {
         canvas.set_fill_style_str(&cfg.arena_color);
         canvas.fill_rect(cfg.arena_pos.x, cfg.arena_pos.y, cfg.arena_width, cfg.arena_height);
         
-        self.snake.draw(&self.imp);
+        for s in self.snakes.iter() {
+            s.draw(&self.imp);
+        }
         
         // Draw FPS
         self.imp.painter().draw_text(&self.fps_str, &(2000, 10).into(), 300.0, &self.imp.config.ui.fps);
@@ -193,12 +297,6 @@ impl GameState {
         
         if evt.event_type == MouseEventType::Up {
             self.imp.is_mouse_down = false;
-            if self.connect_handle != NetworkHandle::invalid() {
-                self.imp.network().send(self.connect_handle, NetMsg::SnakePos((evt.pos.x as i32, evt.pos.y as i32)));
-            }
-            if self.client_handle != NetworkHandle::invalid() {
-                self.imp.network().send(self.client_handle, NetMsg::SnakePos((evt.pos.x as i32, evt.pos.y as i32)));
-            }
         }
         else if evt.event_type == MouseEventType::Down {
             self.imp.is_mouse_down = true;
@@ -209,10 +307,18 @@ impl GameState {
     
     fn be_host(&mut self) {
         self.listen_handle = self.imp.network().listen("moveaxesp-snake-snatch-game");
+        let start_points = self.possible_start_points.remove(0);
+        self.snakes.push(Snake::new_local("Myself", &start_points));
     }
     
     fn be_client(&mut self) {
-        self.connect_handle = self.imp.network().connect("moveaxesp-snake-snatch-game");        
+        self.connect_handle = self.imp.network().connect("moveaxesp-snake-snatch-game");
+    }
+    
+    fn ping_connections(&mut self) {
+        let now = self.imp.now();
+        self.imp.network().send(&self.connect_handle, 0, NetMsg::Ping(now));
+        self.imp.network().send(&self.client_handle, 0, NetMsg::Ping(now));
     }
 
 }
@@ -240,6 +346,7 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         elapsed_time: 0.0,
         is_mouse_down: false,
         mouse_pos: (0,0).into(),
+        now: 0.0,
     };
 
     let mut state = GameState{
@@ -247,12 +354,19 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         offscreen_canvas: offscreen_canvas,
         got_first_input: false,
         frame_times: Vec::new(),
+        game_start_instant: Instant::now(),
         imp: game_imp,
         fps_str: "".to_string(),
         listen_handle: NetworkHandle::invalid(),
         connect_handle: NetworkHandle::invalid(),
         client_handle: NetworkHandle::invalid(),
-        snake: Snake::new(),
+        snakes: Vec::new(),
+        possible_start_points: vec![
+            vec![(200, 200).into(), (300, 300).into()],
+            vec![(600, 200).into(), (500, 300).into()],
+            vec![(200, 600).into(), (300, 500).into()],
+            vec![(600, 600).into(), (500, 500).into()],
+        ]
     };
 
     state.frame_times.push((Instant::now(), Instant::now()));
@@ -365,6 +479,16 @@ pub fn be_client() {
         #[allow(static_mut_refs)]
         if let Some(state) = &mut *S_STATE.borrow_mut() {
             state.be_client();
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn ping_connections() {
+    unsafe {
+        #[allow(static_mut_refs)]
+        if let Some(state) = &mut *S_STATE.borrow_mut() {
+            state.ping_connections();
         }
     }
 }

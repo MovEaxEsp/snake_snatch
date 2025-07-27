@@ -84,6 +84,7 @@ impl Painter {
         advance_color(&mut self.keyword_b, elapsed_time);
     }
 
+    /*
     pub fn set_global_alpha(&self, alpha: f64) {
         self.canvas.set_global_alpha(alpha);
     }
@@ -159,7 +160,6 @@ impl Painter {
         }
     }
 
-    /*
     fn draw_halo(&self, xpos: f64, ypos: f64, width: f64, height: f64) {
         let middle_x = xpos + width/2.0;
         let middle_y = (ypos + height/2.0) * 2.0;
