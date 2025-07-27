@@ -3,15 +3,6 @@
 <html>
 
 <head>
-    <!--<script type="text/javascript" src="http://localhost:8000/pkg/res_type_rant.js" ></script>-->
-    <style>
-      #canvasHolder {
-        aspect-ratio: 16/9;
-        width: 80%;
-      }
-    </style>
-     <!--<script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@latest"></script>-->
-
      <!-- when using the mode "code", it's important to specify charset utf-8 -->
     <meta charset="utf-8">
 
@@ -138,6 +129,15 @@
             }
         };
 
+        // Resize canvas when window resizes
+        function resizeCanvas() {
+          let canvas = document.getElementById("canvas");
+          canvas.width = window.innerWidth * .8;
+          canvas.height = canvas.width * 9.0/16.0;
+        }
+        window.addEventListener('resize', resizeCanvas,false);
+        resizeCanvas();
+
         // Show config in textarea
         let cfgInput = document.getElementById("config");
         cfgInput.value = JSON.stringify(gameConfig, null, 2);
@@ -168,11 +168,7 @@
           editor.set(gameConfig);
         }
 
-        let canvasDiv = document.getElementById("canvasHolder");
-
         let canvas = document.getElementById("canvas");
-        canvas.width = canvasDiv.clientWidth;
-        canvas.height = canvasDiv.clientHeight;
 
         function emit_mouse_event(eventName, mouseEvent) {
           let canvas_rect = canvas.getBoundingClientRect();
@@ -191,23 +187,11 @@
         canvas.addEventListener("mousedown", e => emit_mouse_event("Down", e));
         canvas.addEventListener("mousemove", e => emit_mouse_event("Move", e));
 
-        //canvas = document.getElementById("myCanvas");
         startGameFn = () => {
           init_state(gameConfig, canvas, images, audioCtx, sounds);
         };
 
         startGameFn();
-
-        //canvas.width = screen.width;
-        //canvas.height = screen.height;
-        //canvas.addEventListener('mousedown', handleMouseDown, false);
-        //canvas.addEventListener('mousemove', handleMouseMove, false);
-        //cRect = canvas.getBoundingClientRect();
-        //ctx = canvas.getContext("2d");
-
-        // And afterwards we can use all the functionality defined in wasm.
-        //greet();
-        //add_test(5, 6);
 
         // Run at 30 FPS
         setInterval(function() { run_frame(); }, 1000/30);
@@ -230,9 +214,8 @@
       run();
 </script>
 
-<div id="canvasHolder">
-  <canvas id="canvas" style="border: 1px solid black;height:100%;width:100%"></canvas>
-</div>
+  
+<canvas id="canvas" style="border: 1px solid black;display: block"></canvas>
 
 <button type="button" id="hostButton">Host</button>
 <button type="button" id="connectButton">Connect</button>
