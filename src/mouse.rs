@@ -1,7 +1,7 @@
 
 use engine_p::interpolable::Pos2d;
 use wasm_bindgen::prelude::*;
-use web_sys::{HtmlCanvasElement, MouseEvent, TouchEvent};
+use web_sys::{AddEventListenerOptions, HtmlCanvasElement, MouseEvent, TouchEvent};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,6 +48,7 @@ pub struct MouseManager {
     _on_touchstart_closure: Closure::<dyn FnMut(TouchEvent)>,
     _on_touchend_closure: Closure::<dyn FnMut(TouchEvent)>,
     _on_touchmove_closure: Closure::<dyn FnMut(TouchEvent)>,
+    _document_touch_closure: Closure::<dyn FnMut(TouchEvent)>,
 }
 
 impl MouseManager {
@@ -101,15 +102,14 @@ impl MouseManager {
         
         // Touch end
         imp_ref = imp.clone();
-        let touch_end_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
+        let touch_end_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |_: TouchEvent| {
             let cb_imp = &mut *imp_ref.borrow_mut();
-            let touch = evt.target_touches().item(0).unwrap();
             cb_imp.handle_event(MouseEventType::Up,
-                                touch.client_x(),
-                                touch.client_y());
+                                0,
+                                0);
         });
         canvas.add_event_listener_with_callback_and_bool(
-                                   "touchsend",
+                                   "touchend",
                                    touch_end_closure.as_ref().unchecked_ref(),
                                    false).expect("touchend");
         canvas.add_event_listener_with_callback_and_bool(
@@ -124,12 +124,39 @@ impl MouseManager {
             cb_imp.handle_event(MouseEventType::Move,
                                 touch.client_x(),
                                 touch.client_y());
-            evt.prevent_default();
         });
         canvas.add_event_listener_with_callback_and_bool(
                                    "touchmove",
                                    touch_move_closure.as_ref().unchecked_ref(),
                                    false).expect("touchmove");
+        
+        // Make 'document' ignore touch events over the canvas to prevent the screen from scrolling
+        let document_touch_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
+            if let Some(tgt) =  evt.target() {
+                if tgt.is_instance_of::<HtmlCanvasElement>() {
+                    evt.prevent_default();
+                }
+            }
+        });
+        let document = web_sys::window().expect("window").document().expect("document");
+        let options = AddEventListenerOptions::new();
+        options.set_passive(false);
+        document.add_event_listener_with_callback_and_add_event_listener_options(
+                               "touchstart",
+                               document_touch_closure.as_ref().unchecked_ref(),
+                               &options).expect("doc touchstart");
+        document.add_event_listener_with_callback_and_add_event_listener_options(
+                               "touchend",
+                               document_touch_closure.as_ref().unchecked_ref(),
+                               &options).expect("doc touchend");
+        document.add_event_listener_with_callback_and_add_event_listener_options(
+                               "touchcancel",
+                               document_touch_closure.as_ref().unchecked_ref(),
+                               &options).expect("doc touchcancel");
+        document.add_event_listener_with_callback_and_add_event_listener_options(
+                               "touchmove",
+                               document_touch_closure.as_ref().unchecked_ref(),
+                               &options).expect("doc touchmove");
 
         Self {
             imp,
@@ -139,6 +166,7 @@ impl MouseManager {
             _on_touchstart_closure: touch_start_closure,
             _on_touchend_closure: touch_end_closure,
             _on_touchmove_closure: touch_move_closure,
+            _document_touch_closure: document_touch_closure,
         }
     }
     
