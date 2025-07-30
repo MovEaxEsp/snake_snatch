@@ -112,6 +112,10 @@ impl MouseManager {
                                    "touchsend",
                                    touch_end_closure.as_ref().unchecked_ref(),
                                    false).expect("touchend");
+        canvas.add_event_listener_with_callback_and_bool(
+                                   "touchcancel",
+                                   touch_end_closure.as_ref().unchecked_ref(),
+                                   false).expect("touchcancel");
         
         imp_ref = imp.clone();
         let touch_move_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
@@ -120,6 +124,7 @@ impl MouseManager {
             cb_imp.handle_event(MouseEventType::Move,
                                 touch.client_x(),
                                 touch.client_y());
+            evt.prevent_default();
         });
         canvas.add_event_listener_with_callback_and_bool(
                                    "touchmove",
