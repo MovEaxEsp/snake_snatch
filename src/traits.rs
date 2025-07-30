@@ -3,6 +3,7 @@ use engine_p::interpolable::Pos2d;
 use serde::{Serialize, Deserialize};
 
 
+use crate::mouse::MouseManager;
 use crate::network::NetworkManager;
 use crate::painter::Painter;
 use crate::snake::SnakeMsg;
@@ -51,7 +52,5 @@ pub trait BaseGame {
     
     fn now(&self) -> f64;
     
-    fn mouse_pos(&self) -> Pos2d;
-    
-    fn is_mouse_down(&self) -> bool;
+    fn mouse(&self) -> &MouseManager;
 }

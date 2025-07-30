@@ -1,3 +1,4 @@
+mod mouse;
 mod network;
 mod painter;
 mod snake;
@@ -5,6 +6,7 @@ mod traits;
 mod utils;
 
 use engine_p::interpolable::{Pos2d};
+use mouse::MouseManager;
 use network::{NetData, NetworkHandle, NetworkManager, NetUpdate};
 use painter::{Painter, TextConfig};
 use serde::{Serialize,Deserialize};
@@ -21,19 +23,6 @@ use std::cell::RefCell;
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
-}
-
-#[derive(Deserialize, PartialEq, Debug)]
-pub enum MouseEventType {
-    Down,
-    Up,
-    Move
-}
-
-#[derive(Deserialize, Debug)]
-pub struct MouseEvent {
-    event_type: MouseEventType,   
-    pos: Pos2d,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -61,8 +50,7 @@ struct GameImp {
     painter: Painter,
     network: NetworkManager<NetMsg>,
     config: OuterConfig,
-    is_mouse_down: bool,
-    mouse_pos: Pos2d,
+    mouse: MouseManager,
     elapsed_time: f64,  // seconds since previous frame start (for calculating current frame)
     now: f64,
 }
@@ -80,12 +68,8 @@ impl BaseGame for GameImp {
         self.elapsed_time
     }
     
-    fn mouse_pos(&self) -> Pos2d {
-        self.mouse_pos
-    }
-    
-    fn is_mouse_down(&self) -> bool {
-        self.is_mouse_down
+    fn mouse(&self) -> &MouseManager {
+        &self.mouse
     }
     
     fn now(&self) -> f64 {
@@ -102,7 +86,6 @@ impl GameImp {
 struct GameState {
     screen_canvas: HtmlCanvasElement,
     offscreen_canvas: OffscreenCanvas,
-    got_first_input: bool,
     game_start_instant: Instant,
     frame_times: Vec<(Instant, Instant)>, // for measuring elapsed_time, fps
     fps_str: String,
@@ -285,26 +268,6 @@ impl GameState {
         //self.imp.painter.update_config(&cfg.ui.images);
     }
     
-    fn handle_mouse_event(&mut self, mut evt: MouseEvent) {
-        self.got_first_input = true;
-        
-        // Adjust event x and y for offscreen canvas coordinates
-        let width_factor = self.offscreen_canvas.width() as f64 / self.screen_canvas.width() as f64;
-        let height_factor = self.offscreen_canvas.height() as f64 / self.screen_canvas.height() as f64;
-        
-        evt.pos.x *= width_factor;
-        evt.pos.y *= height_factor;
-        
-        if evt.event_type == MouseEventType::Up {
-            self.imp.is_mouse_down = false;
-        }
-        else if evt.event_type == MouseEventType::Down {
-            self.imp.is_mouse_down = true;
-        }
-        
-        self.imp.mouse_pos = evt.pos;
-    }
-    
     fn be_host(&mut self) {
         self.listen_handle = self.imp.network().listen("moveaxesp-snake-snatch-game");
         let start_points = self.possible_start_points.remove(0);
@@ -344,15 +307,13 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         network: NetworkManager::new(),
         config: game_config,
         elapsed_time: 0.0,
-        is_mouse_down: false,
-        mouse_pos: (0,0).into(),
+        mouse: MouseManager::new(screen_canvas.clone(), 2560.0, 1440.0),
         now: 0.0,
     };
 
     let mut state = GameState{
         screen_canvas: screen_canvas,
         offscreen_canvas: offscreen_canvas,
-        got_first_input: false,
         frame_times: Vec::new(),
         game_start_instant: Instant::now(),
         imp: game_imp,
@@ -394,23 +355,6 @@ pub fn run_frame(){
         #[allow(static_mut_refs)]
         if let Some(state) = &mut *S_STATE.borrow_mut() {
             run_frame_imp(state);
-        }
-    }
-}
-
-#[wasm_bindgen]
-pub fn handle_mouse_event(event: JsValue) {
-    match serde_wasm_bindgen::from_value::<MouseEvent>(event) {
-        Ok(evt) => {
-            unsafe {
-                #[allow(static_mut_refs)]
-                if let Some(state) = &mut *S_STATE.borrow_mut() {
-                    state.handle_mouse_event(evt);
-                }
-            }
-        }
-        Err(e) => {
-            log(&format!("Failed parsing mouse event: {}", e));
         }
     }
 }

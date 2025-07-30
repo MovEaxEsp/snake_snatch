@@ -61,8 +61,8 @@ impl OwnSnakeImp {
         // Update the size of our snake depending on if mouse is down or up
         let snake_points = &mut data.snake_points;
         let snake_intr = Interpolable::new(*snake_points.last().unwrap(), config.grow_speed);
-        if game.is_mouse_down() && game.mouse_pos() != *snake_points.last().unwrap() {
-            snake_intr.set_end(game.mouse_pos());
+        if game.mouse().is_down() && game.mouse().pos() != *snake_points.last().unwrap() {
+            snake_intr.set_end(game.mouse().pos());
             snake_intr.advance(game.elapsed_time());
             *snake_points.last_mut().unwrap() = snake_intr.cur();
 
@@ -73,7 +73,7 @@ impl OwnSnakeImp {
             
             data.points_changed = true;
         }
-        else if !game.is_mouse_down() && snake_points.len() > 2 {
+        else if !game.mouse().is_down() && snake_points.len() > 2 {
             // Shrink the snake while the mouse is up
             let segment_start = snake_points[snake_points.len()-2];
             snake_intr.set_end(segment_start);
