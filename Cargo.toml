@@ -7,6 +7,9 @@ version = "0.1.0"
 authors = ["Pawel Grzech <pgrzech1@bloomberg.net>"]
 edition = "2018"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

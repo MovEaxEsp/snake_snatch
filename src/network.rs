@@ -56,45 +56,30 @@ where MSG: fmt::Debug + Serialize
     pub msg: MSG,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub enum NetReqType<MSG>
-where  MSG: fmt::Debug + Serialize
-{
-    Listen(String),
-    Connect(String),
-    Close,
-    Send(NetData<MSG>),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct NetReq<MSG>
-where MSG: fmt::Debug + Serialize
-{
-    pub correlator: i32,
-    pub req: NetReqType<MSG>,
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub enum NetUpdate<MSG>
-where MSG: fmt::Debug + Serialize
+pub enum NetUpdate
 {
     ListenFail,
     ConnectFail,
     NewPeer(i32),
-    Data(NetData<MSG>), // stream_id + msg
     Closed,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+// NetworkHandle
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NetworkHandle(i32);
 
 impl NetworkHandle {
-    pub fn invalid() -> NetworkHandle {
-        NetworkHandle { 0: 0 }
-    }
-    
+    // CREATORS
     pub fn from_correlator(corr: i32) -> NetworkHandle {
         NetworkHandle { 0: corr }
+    }
+
+    // ACCESSORS
+    
+    /// Return the default stream (stream 0) for this handle
+    pub fn default_stream(&self) -> StreamHandle {
+        StreamHandle::new(*self, 0)
     }
 }
 
@@ -104,6 +89,34 @@ impl fmt::Display for NetworkHandle {
     }
 }
 
+// StreamHandle
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StreamHandle {
+    handle: NetworkHandle,
+    stream_id: i32,
+}
+
+impl StreamHandle {
+    pub fn new(handle: NetworkHandle, stream_id: i32) -> Self {
+        Self { handle, stream_id }
+    }
+    
+    pub fn sibling(&self, stream_id: i32) -> Self {
+        Self { handle: self.handle, stream_id }
+    }
+
+    pub fn stream_id(&self) -> i32 {
+        self.stream_id
+    }
+}
+
+impl fmt::Display for StreamHandle {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.handle, self.stream_id)
+    }
+}
+
+/// PeerInfo
 pub struct PeerInfo<MSG>
 where MSG: fmt::Debug + Serialize
 {
@@ -118,7 +131,8 @@ where MSG: fmt::Debug + Serialize
     _dc_data_closure: Option<Closure::<dyn FnMut(JsValue)>>,
     _dc_close_closure: Option<Closure::<dyn FnMut()>>,
     _dc_error_closure: Option<Closure::<dyn FnMut(JsValue)>>,
-    received_msgs: HashMap<i32, Vec<NetUpdate<MSG>>>,
+    received_updates: Vec<NetUpdate>,
+    received_msgs: HashMap<i32, Vec<MSG>>,
     next_stream_id: i32,
 }
 
@@ -138,13 +152,10 @@ where MSG: fmt::Debug + Serialize
             _dc_data_closure: None,
             _dc_close_closure: None,
             _dc_error_closure: None,
+            received_updates: Vec::new(),
             received_msgs: HashMap::new(),
             next_stream_id: if is_listen {1} else {2},
         }
-    }
-    
-    fn receive(&mut self, stream_id: i32, upd: NetUpdate<MSG>) {
-        self.received_msgs.entry(stream_id).or_default().push(upd);
     }
 }
 
@@ -166,7 +177,7 @@ where MSG: DeserializeOwned + fmt::Debug + Serialize + 'static
             let mut imp = imp_rc.borrow_mut();
             match imp.handle_map.get_mut(&src_handle) {
                 Some(peer) => {
-                    peer.receive(0, NetUpdate::NewPeer(dc_handle));
+                    peer.received_updates.push(NetUpdate::NewPeer(dc_handle));
                 }
                 None => {
                     log(&format!("Got 'open' for unknown handle: {}", &src_handle));
@@ -187,7 +198,7 @@ where MSG: DeserializeOwned + fmt::Debug + Serialize + 'static
                     let mut imp = imp_rc.borrow_mut();
                     match imp.handle_map.get_mut(&dc_handle) {
                         Some(closure_peer) => {
-                            closure_peer.receive(msg.stream_id, NetUpdate::Data(msg));
+                            closure_peer.received_msgs.entry(msg.stream_id).or_default().push(msg.msg);
                         }
                         None => {
                             log(&format!("Got update for unknown handle: {}", &dc_handle));
@@ -341,7 +352,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
     }
     
     /// Cancel the operation/close the connection associted with the specified 'handle'
-    pub fn close(&mut self, NetworkHandle(handle): NetworkHandle) {
+    pub fn _close(&mut self, NetworkHandle(handle): NetworkHandle) {
         let imp = &mut *self.imp.borrow_mut();
 
         match imp.handle_map.remove(&handle) {
@@ -360,52 +371,64 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
         }
     }
     
-    /// Send the specified 'msg' to the peer associated with the specified 'handle'.
-    pub fn send(&mut self, NetworkHandle(handle): &NetworkHandle, stream_id: i32, msg: MSG) {
+    /// Send the specified 'msg' over the specified 'stream'
+    pub fn send(&mut self, stream: &StreamHandle, msg: MSG) {
         let imp = &mut *self.imp.borrow_mut();
 
         let send_msg = NetData::<MSG> {
-            stream_id,
+            stream_id: stream.stream_id,
             msg
         };
 
         let encoded = serde_wasm_bindgen::to_value(&send_msg).unwrap();
         
-        match imp.handle_map.get(&handle) {
+        match imp.handle_map.get(&stream.handle.0) {
             Some(info) => {
                 match &info._dc {
                     Some(dc) => {
-                        log(&format!("Net(send) handle:{}, msg: {:?}", handle, &send_msg));
+                        log(&format!("Net(send) handle:{}, msg: {:?}", stream.handle, &send_msg));
                         dc.send(&encoded);
                     },
                     None => {
-                        log(&format!("Net(send) handle:{} No DC", handle));
+                        log(&format!("Net(send) handle:{} No DC", stream.handle));
                     }
                 }
             },
             None => {
-                log(&format!("Net(send) handle:{} not found", handle));
+                log(&format!("Net(send) handle:{} not found", stream.handle));
             }
         }
     }
     
     /// Return a new stream_id for the specified 'peer'
-    pub fn new_stream_id(&mut self, NetworkHandle(handle): NetworkHandle) -> Option<i32> {
+    pub fn new_stream(&mut self, NetworkHandle(handle): NetworkHandle) -> Option<StreamHandle> {
         let imp = &mut *self.imp.borrow_mut();
 
         let info = imp.handle_map.get_mut(&handle)?;
-        let ret = info.next_stream_id;
+        let new_id = info.next_stream_id;
         info.next_stream_id += 2;
-
-        Some(ret)
+        return Some(StreamHandle::new(NetworkHandle{0:handle}, new_id));
+    }
+    pub fn new_sibling_stream(&mut self, stream: &StreamHandle) -> Option<StreamHandle> {
+        self.new_stream(stream.handle)
     }
     
     /// Return all the received updates for the specified 'handle
-    pub fn get_handle_events(&mut self, NetworkHandle(handle): NetworkHandle, stream_id: i32) -> Vec<NetUpdate<MSG>> {
+    pub fn get_handle_events(&mut self, NetworkHandle(handle): NetworkHandle) -> Vec<NetUpdate> {
         let imp = &mut *self.imp.borrow_mut();
 
         if let Some(info) = imp.handle_map.get_mut(&handle) {
-            if let Some(msgs) = info.received_msgs.get_mut(&stream_id) {
+            return std::mem::take(&mut info.received_updates);
+        }
+
+        return Vec::new();
+    }
+
+    pub fn get_stream_msgs(&mut self, handle: StreamHandle) -> Vec<MSG> {
+        let imp = &mut *self.imp.borrow_mut();
+
+        if let Some(info) = imp.handle_map.get_mut(&handle.handle.0) {
+            if let Some(msgs) = info.received_msgs.get_mut(&handle.stream_id) {
                 return std::mem::take(msgs);
             }
         }

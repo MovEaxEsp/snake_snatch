@@ -6,16 +6,16 @@ use serde::{Serialize, Deserialize};
 use crate::mouse::MouseManager;
 use crate::network::NetworkManager;
 use crate::painter::Painter;
+use crate::players::{PlayerMsg, PlayersMsg};
 use crate::snake::SnakeMsg;
 
-// Sent by a new player connecting to the host
-// Or by the host to each player to tell it about an existing player.
+// Handshake sent by a client to the host, telling it the stream to use to send
+// player-relaed messages.  Sent over stream 0
 #[derive(Debug, Deserialize, Serialize)]
-pub struct SnakeIntroMsg {
-    pub name: String,
-    pub snake_stream_id: i32,
-    pub start_points: Vec<Pos2d>,
+pub struct NewClientMsg {
+    pub players_stream: i32,
 }
+
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum NetMsg {
@@ -23,16 +23,22 @@ pub enum NetMsg {
     // on request, negative on response
     Ping(f64),
 
-    // Sent by a client or host to inform the peer about a snake in the game
-    SnakeIntro(SnakeIntroMsg),
-    
+    // Sent by a new client to the host
+    NewClient(NewClientMsg),
+
+    // PlayerManager-specific messages
+    Players(PlayersMsg),
+
+    // Player-specific messages
+    Player(PlayerMsg),
+
     // Message for 'snake.rs', about the state of a particular snake
     // Sent over a dedicated stream
     Snake(SnakeMsg),
-    
+
     // Sent by the host to inform players about a changed list
     // of possible snake start points
-    StartPointsUpdate(Vec<Vec<Pos2d>>),
+    StartPointsUpdate(Vec<Pos2d>),
 }
 
 pub trait BaseGame {
@@ -41,7 +47,7 @@ pub trait BaseGame {
     //fn images<'a>(&'a self) -> &'a Images;
 
     fn painter<'a>(&'a self) -> &'a Painter;
-    
+
     fn network(&mut self) -> &mut NetworkManager<NetMsg>;
 
     //fn sounds(&self) -> &Sounds;
@@ -49,8 +55,8 @@ pub trait BaseGame {
     //fn image_props<'a>(&'a self, image: &Image) -> &'a ImageProps;
 
     fn elapsed_time(&self) -> f64;
-    
+
     fn now(&self) -> f64;
-    
+
     fn mouse(&self) -> &MouseManager;
 }

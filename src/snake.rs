@@ -3,12 +3,12 @@
 use engine_p::interpolable::{Interpolable, Pos2d}; 
 use serde::{Serialize,Deserialize};
 
-use crate::network::{NetData, NetworkHandle, NetUpdate};
+use crate::network::StreamHandle;
 use crate::traits::{BaseGame, NetMsg};
 use crate::utils::log;
 
 // Config structs
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SnakeConfig {
     pub grow_speed: f64,
 }
@@ -28,14 +28,14 @@ pub enum SnakeMsg {
 }
 
 /// Helper Functions
-fn read_snake_msgs(updates: Vec<NetUpdate<NetMsg>>, peer: NetworkHandle, stream_id: i32, cb: &mut dyn FnMut(SnakeMsg)) {
+fn read_snake_msgs(updates: Vec<NetMsg>, stream: StreamHandle, cb: &mut dyn FnMut(SnakeMsg)) {
     for upd in updates.into_iter() {
-        if let NetUpdate::Data(NetData{msg: NetMsg::Snake(msg), ..}) = upd {
+        if let NetMsg::Snake(msg) = upd {
             cb(msg);
             continue;
         }
 
-        log(&format!("Unexpected snake stream msg. Peer: {}, Stream: {}, msg: {:?}", &peer, stream_id, &upd));                    
+        log(&format!("Unexpected snake stream msg. Stream: {}, msg: {:?}", stream, &upd));                    
     }
 }
 
@@ -94,25 +94,24 @@ impl OwnSnakeImp {
 /// RemoteSnakeImp
 // To handle Snake events when it's controlled by a remote peer
 struct RemoteSnakeImp {
-    peer: NetworkHandle,
-    stream_id: i32,
+    stream: StreamHandle,
 }
 
 impl RemoteSnakeImp {
     fn think(&mut self, data: &mut SnakeData, game: &mut dyn BaseGame) {
-        let upds = game.network().get_handle_events(self.peer, self.stream_id);
-        read_snake_msgs(upds, self.peer, self.stream_id, &mut |msg| {
+        let upds = game.network().get_stream_msgs(self.stream);
+        read_snake_msgs(upds, self.stream, &mut |msg| {
             match &msg {
                 SnakeMsg::EndUpdate(upd) => {
                     if data.snake_points.len() < upd.prev_segs {
                         log(&format!("Snake({}) not enough segments for update: {:?}", data.name, msg));
-                        game.network().send(&self.peer, self.stream_id, NetMsg::Snake(SnakeMsg::FullUpdateReq));
+                        game.network().send(&self.stream, NetMsg::Snake(SnakeMsg::FullUpdateReq));
                         return;
                     } 
                     
                     if data.points_sum(upd.prev_segs) != upd.prev_segs_sum {
                         log(&format!("Snake({}) prev_segs_sum wrong for update: {:?}", data.name, msg));
-                        game.network().send(&self.peer, self.stream_id, NetMsg::Snake(SnakeMsg::FullUpdateReq));
+                        game.network().send(&self.stream, NetMsg::Snake(SnakeMsg::FullUpdateReq));
                         return;
                     }
                     
@@ -124,7 +123,7 @@ impl RemoteSnakeImp {
                     data.points_changed = true;
                 },
                 _ => {
-                    log(&format!("Unexpected msg from snake remote: {},{}: {:?}", self.peer, self.stream_id, &msg));
+                    log(&format!("Unexpected msg from snake remote: {} -> {:?}", self.stream, &msg));
                 }
             }
         });
@@ -133,20 +132,18 @@ impl RemoteSnakeImp {
 
 /// SnakePeer
 struct SnakePeer {
-    peer: NetworkHandle,
-    stream_id: i32,
+    stream: StreamHandle,
     next_send_time: f64,
 }
 
 impl SnakePeer {
     fn think(&mut self, data: &mut SnakeData, game: &mut dyn BaseGame) {
-        let upds = game.network().get_handle_events(self.peer, self.stream_id);
-        read_snake_msgs(upds, self.peer, self.stream_id, &mut |msg| {
+        let upds = game.network().get_stream_msgs(self.stream);
+        read_snake_msgs(upds, self.stream, &mut |msg| {
             match &msg {
                 SnakeMsg::FullUpdateReq => {
                     game.network().send(
-                        &self.peer,
-                        self.stream_id,
+                        &self.stream,
                         NetMsg::Snake(SnakeMsg::EndUpdate(EndUpdateMsg {
                             prev_segs: 0,
                             prev_segs_sum: 0.0,
@@ -154,7 +151,7 @@ impl SnakePeer {
                         })));
                 },
                 _ => {
-                    log(&format!("Unexpected msg from snake peer: {},{}: {:?}", self.peer, self.stream_id, &msg));
+                    log(&format!("Unexpected msg from snake peer: {} -> {:?}", self.stream, &msg));
                 }
             }
         });
@@ -165,8 +162,7 @@ impl SnakePeer {
             let pts = &data.snake_points;
             if pts.len() > 2 {
                 game.network().send(
-                    &self.peer,
-                    self.stream_id,
+                    &self.stream,
                     NetMsg::Snake(SnakeMsg::EndUpdate(EndUpdateMsg {
                         prev_segs: pts.len() - 2,
                         prev_segs_sum: data.points_sum(pts.len() - 2),
@@ -175,8 +171,7 @@ impl SnakePeer {
             }
             else {
                 game.network().send(
-                    &self.peer,
-                    self.stream_id,
+                    &self.stream,
                     NetMsg::Snake(SnakeMsg::EndUpdate(EndUpdateMsg {
                         prev_segs: 0,
                         prev_segs_sum: 0.0,
@@ -197,10 +192,10 @@ pub struct Snake {
 }
 
 impl Snake {
-    pub fn new_local(name: &str, start_points: &Vec<Pos2d>) -> Self {
+    pub fn new_local(name: &str, start_pos: &Pos2d) -> Self {
         Self {
             data: SnakeData {
-                snake_points: start_points.clone(),
+                snake_points: vec![*start_pos, *start_pos],
                 name: name.to_string(),
                 points_changed: false,
             },
@@ -211,34 +206,34 @@ impl Snake {
         }
     }
     
-    pub fn new_remote(name: &str, peer: NetworkHandle, stream_id: i32, start_points: &Vec<Pos2d>) -> Self {
+    pub fn new_remote(name: &str, stream: StreamHandle, start_pos: &Pos2d) -> Self {
         Self {
             data: SnakeData {
-                snake_points: start_points.clone(),
+                snake_points: vec![*start_pos, *start_pos],
                 name: name.to_string(),
                 points_changed: false,
             },
             own_imp: None,
             remote_imp: Some(RemoteSnakeImp {
-                peer,
-                stream_id
+                stream,
             }),
             peers: Vec::new(),
         }
     }
     
-    pub fn add_peer(&mut self, peer: NetworkHandle, stream_id: i32) {
+    pub fn add_peer(&mut self, stream: StreamHandle) {
         self.peers.push(SnakePeer {
-            peer,
-            stream_id,
+            stream,
             next_send_time: 0.0,
         });
     }
     
     // Return our start_points (first 2 points of the snake)
-    pub fn get_start_points(&self) -> Vec<Pos2d> {
-        self.data.snake_points[..2].iter().cloned().collect()
+    /*
+    pub fn get_start_pos(&self) -> Pos2d {
+        self.data.snake_points[0]
     }
+    */
     
     // Handle per-frame processing
     pub fn think(&mut self, game: &mut dyn BaseGame, config: &SnakeConfig) {
