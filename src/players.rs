@@ -237,34 +237,39 @@ impl HostPlayer {
 /// HostPlayerManager
 /// PlayerManager used when we're acting as the host
 pub struct HostPlayerManager {
-    self_player: HostPlayer,
-
     // Available positions for snakes
     open_positions: Vec<Pos2d>,
 
-    // the key is the corresponding client's network handle
-    players: HashMap<NetworkHandle, HostPlayer>,
+    // the key is the corresponding client's network handle, or None for the host
+    players: HashMap<Option<NetworkHandle>, HostPlayer>,
 }
 
 impl HostPlayerManager {
     pub fn new(self_name: &str, config: &PlayerManagerConfig) -> Self {
+        let mut open_positions = config.snake_start_points.clone();
+        open_positions.remove(0); // Remove the position the host is using
+
+        let host_player = HostPlayer {
+            name: self_name.to_string(),
+            snake: Some(Snake::new_local("HostSnake", &config.snake_start_points[0])),
+            players_stream: None,
+            player_stream: None,
+            peer_streams: HashMap::new(),
+            need_update_choices: false,
+        };
+
+        let mut players = HashMap::new();
+        players.insert(None, host_player);
+
         Self {
-            self_player: HostPlayer {
-                name: self_name.to_string(),
-                snake: Some(Snake::new_local("HostSnake", &config.snake_start_points[0])),
-                players_stream: None,
-                player_stream: None,
-                peer_streams: HashMap::new(),
-                need_update_choices: false,
-            },
-            open_positions: config.snake_start_points[1..].to_vec(),
-            players: HashMap::new(),
+            open_positions,
+            players,
         }
     }
 
     /// Add a new client with the corresponding 'players_stream'.
     pub fn add_client(&mut self, handle: NetworkHandle) {
-        self.players.insert(handle, HostPlayer {
+        self.players.insert(Some(handle), HostPlayer {
             name: "".to_string(),
             snake: None,
             players_stream: None,
@@ -277,57 +282,61 @@ impl HostPlayerManager {
     pub fn think(&mut self, game: &mut dyn BaseGame, config: &PlayerManagerConfig) {
         let mut have_new_player = false;
         let mut closed_handles: Vec<NetworkHandle> = Vec::new();
-        for (handle, player) in self.players.iter_mut() {
-            // Process 'handle' events
-            for outer in game.network().get_handle_events(*handle) {
-                match outer {
-                    NetUpdate::Closed => {
-                        log(&format!("Client disconnected: {}", handle));
-                        closed_handles.push(*handle);
-                    }
-                    _ => {
-                        log(&format!("Unexpected NetUpdate for client handle {} :: {:?}", handle, outer));
+
+        // Process all players (including host at key None)
+        for (handle_opt, player) in self.players.iter_mut() {
+            // Only process network events for actual clients (not the host)
+            if let Some(handle) = handle_opt {
+                // Process 'handle' events
+                for outer in game.network().get_handle_events(*handle) {
+                    match outer {
+                        NetUpdate::Closed => {
+                            log(&format!("Client disconnected: {}", handle));
+                            closed_handles.push(*handle);
+                        }
+                        _ => {
+                            log(&format!("Unexpected NetUpdate for client handle {} :: {:?}", handle, outer));
+                        }
                     }
                 }
-            }
 
-            // Process stream-0 events (NewClient)
-            for outer in game.network().get_stream_msgs(handle.default_stream()) {
-                match outer {
-                    NetMsg::NewClient(msg) => {
-                        let players_stream = handle.default_stream().sibling(msg.players_stream);
-                        player.players_stream = Some(PlayersStream {0: players_stream});
-                    }
-                    _ => {
-                        log(&format!("Unexpected message over default stream {} :: {:?}", handle.default_stream(), outer));
+                // Process stream-0 events (NewClient)
+                for outer in game.network().get_stream_msgs(handle.default_stream()) {
+                    match outer {
+                        NetMsg::NewClient(msg) => {
+                            let players_stream = handle.default_stream().sibling(msg.players_stream);
+                            player.players_stream = Some(PlayersStream {0: players_stream});
+                        }
+                        _ => {
+                            log(&format!("Unexpected message over default stream {} :: {:?}", handle.default_stream(), outer));
+                        }
                     }
                 }
-            }
 
-            // Process 'players_stream' messages
-            if let Some(stream) = player.players_stream {
-                stream.process_msgs(game, &mut |outer, _g| match outer {
-                    PlayersMsg::NewPlayer(msg) => {
-                        let player_stream = stream.0.sibling(msg.player_stream);
-                        player.name = msg.name.clone();
-                        player.player_stream = Some(PlayerStream{0:player_stream});
+                // Process 'players_stream' messages
+                if let Some(stream) = player.players_stream {
+                    stream.process_msgs(game, &mut |outer, _g| match outer {
+                        PlayersMsg::NewPlayer(msg) => {
+                            let player_stream = stream.0.sibling(msg.player_stream);
+                            player.name = msg.name.clone();
+                            player.player_stream = Some(PlayerStream{0:player_stream});
 
-                        have_new_player = true;
+                            have_new_player = true;
 
-                        true
-                    }
-                    _ => false
-                });
+                            true
+                        }
+                        _ => false
+                    });
+                }
             }
 
             // Allow the player itself to think
             player.think(game, &mut self.open_positions, config);
         }
 
-        self.self_player.think(game, &mut self.open_positions, config);
-
+        // Clean up disconnected clients
         for hndl in closed_handles.into_iter() {
-            let dead_player = self.players.remove(&hndl).unwrap();
+            let dead_player = self.players.remove(&Some(hndl)).unwrap();
             if let Some(players_stream) = dead_player.players_stream {
                 for (_, player) in self.players.iter_mut() {
                     player.remove_peer_stream(game, &players_stream);
@@ -336,16 +345,48 @@ impl HostPlayerManager {
         }
 
         if have_new_player {
-            // Make sure each player has a player_stream for every other player
-            let mut players_streams = Vec::<PlayersStream>::new();
-            for (_, player) in self.players.iter_mut() {
-                if let Some(str) = player.players_stream {
-                    players_streams.push(str);
+            // Collect information about new players first
+            let mut new_player_streams = Vec::new();
+            for (handle_opt, player) in self.players.iter() {
+                if let Some(_handle) = handle_opt {
+                    if let Some(player_stream) = player.player_stream {
+                        new_player_streams.push(player_stream);
+                    }
                 }
             }
 
-            for (_, player) in self.players.iter_mut() {
-                player.ensure_peer_streams(game, &players_streams);
+            // Add new clients as peers to the host's snake
+            if let Some(host_player) = self.players.get_mut(&None) {
+                if let Some(host_snake) = &mut host_player.snake {
+                    for player_stream in &new_player_streams {
+                        let host_snake_stream = game.network().new_sibling_stream(&player_stream.0).unwrap();
+                        host_snake.add_peer(host_snake_stream);
+
+                        // Tell the client about the host's snake
+                        player_stream.send(game, PlayerMsg::NewSnake(NewSnakeMsg {
+                            pos: config.snake_start_points[0], // Host's position
+                            snake_stream: host_snake_stream.stream_id(),
+                        }));
+                    }
+                }
+            }
+
+            // Make sure each player has a player_stream for every other player
+            let mut players_streams = Vec::<PlayersStream>::new();
+            for (handle_opt, player) in self.players.iter() {
+                // Skip the host player (None key)
+                if handle_opt.is_some() {
+                    if let Some(str) = player.players_stream {
+                        players_streams.push(str);
+                    }
+                }
+            }
+
+            for (handle_opt, player) in self.players.iter_mut() {
+                // Only clients need peer streams (not the host)
+                if handle_opt.is_some() {
+                    player.ensure_peer_streams(game, &players_streams);
+                }
             }
         }
     }
@@ -354,7 +395,6 @@ impl HostPlayerManager {
         for (_, player) in self.players.iter() {
             player.draw(game);
         }
-        self.self_player.draw(game);
     }
 }
 
