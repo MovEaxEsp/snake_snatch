@@ -355,15 +355,41 @@ impl HostPlayerManager {
                 }
             }
 
+            // Collect client information first to avoid borrowing issues
+            let client_info: Vec<_> = new_player_streams.iter()
+                .filter_map(|player_stream| {
+                    self.players.iter().find_map(|(handle_opt, p)| {
+                        if let Some(handle) = handle_opt {
+                            if p.player_stream == Some(*player_stream) {
+                                p.players_stream.map(|ps| (*handle, *player_stream, ps))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
             // Add new clients as peers to the host's snake
             if let Some(host_player) = self.players.get_mut(&None) {
                 if let Some(host_snake) = &mut host_player.snake {
-                    for player_stream in &new_player_streams {
+                    for (_client_handle, player_stream, client_players_stream) in client_info {
                         let host_snake_stream = game.network().new_sibling_stream(&player_stream.0).unwrap();
                         host_snake.add_peer(host_snake_stream);
 
-                        // Tell the client about the host's snake
-                        player_stream.send(game, PlayerMsg::NewSnake(NewSnakeMsg {
+                        // Create a player stream for the host on the client side
+                        let host_player_stream = game.network().new_sibling_stream(&client_players_stream.0).unwrap();
+
+                        // Tell the client about the host player
+                        client_players_stream.send(game, PlayersMsg::NewPlayer(NewPlayerMsg {
+                            name: "Host".to_string(),
+                            player_stream: host_player_stream.stream_id(),
+                        }));
+
+                        // Now send the NewSnake message to the host's player stream on the client
+                        PlayerStream(host_player_stream).send(game, PlayerMsg::NewSnake(NewSnakeMsg {
                             pos: config.snake_start_points[0], // Host's position
                             snake_stream: host_snake_stream.stream_id(),
                         }));
