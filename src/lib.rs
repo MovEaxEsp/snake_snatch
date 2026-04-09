@@ -55,7 +55,7 @@ impl BaseGame for GameImp {
     fn painter<'a>(&'a self) -> &'a Painter {
         &self.painter
     }
-    
+
     fn network(&mut self) -> &mut NetworkManager<NetMsg> {
         &mut self.network
     }
@@ -63,11 +63,11 @@ impl BaseGame for GameImp {
     fn elapsed_time(&self) -> f64 {
         self.elapsed_time
     }
-    
+
     fn mouse(&self) -> &MouseManager {
         &self.mouse
     }
-    
+
     fn now(&self) -> f64 {
         self.now
     }
@@ -110,7 +110,7 @@ impl GameState {
             let processing_pct = (processing_time/elapsed_time) * 100.0;
             self.fps_str = format!("{:.2} FPS ({:2.2} %)", fps, processing_pct);
         }
-        
+
         // Check for network messages
         if let Some(hndl) = self.listen_handle {
             for msg in self.imp.network().get_handle_events(hndl).into_iter() {
@@ -128,11 +128,11 @@ impl GameState {
                     NetUpdate::NewPeer(_) => {
                         let players_stream = self.imp.network.new_stream(hndl).unwrap();
                         let player_stream = self.imp.network.new_stream(hndl).unwrap();
-                        
+
                         self.imp.network.send(&hndl.default_stream(), NetMsg::NewClient(traits::NewClientMsg {
                             players_stream: players_stream.stream_id(),
                         }));
-                        
+
                         self.imp.network.send(&players_stream, NetMsg::Players(PlayersMsg::NewPlayer(NewPlayerMsg {
                             name: "GameClient".to_string(),
                             player_stream: player_stream.stream_id(),
@@ -147,7 +147,7 @@ impl GameState {
                 }
             }
         }
-        
+
         let config = self.imp.config.clone();
 
         self.imp.think();
@@ -159,15 +159,15 @@ impl GameState {
         canvas.set_fill_style_str("DimGrey");
         canvas.clear_rect(0.0, 0.0, 2560.0, 1440.0);
         canvas.fill_rect(0.0, 0.0, 2560.0, 1440.0);
-        
+
         let cfg = &self.imp.config.ui;
-        
+
         // Draw the game area
         canvas.set_fill_style_str(&cfg.arena_color);
         canvas.fill_rect(cfg.arena_pos.x, cfg.arena_pos.y, cfg.arena_width, cfg.arena_height);
-        
+
         self.player_manager.draw(&self.imp);
-        
+
         // Draw FPS
         self.imp.painter().draw_text(&self.fps_str, &(2000, 10).into(), 300.0, &self.imp.config.ui.fps);
 
@@ -188,27 +188,27 @@ impl GameState {
         self.imp.config = cfg.clone();
         //self.imp.painter.update_config(&cfg.ui.images);
     }
-    
+
     fn be_host(&mut self) {
         self.player_manager = PlayerManager::new_host("GameHost", &self.imp.config.game.player_manager);
         self.listen_handle = Some(self.imp.network().listen("moveaxesp-snake-snatch-game"));
     }
-    
+
     fn be_client(&mut self) {
         self.connect_handle = Some(self.imp.network().connect("moveaxesp-snake-snatch-game"));
     }
-    
+
     fn ping_connections(&mut self) {
     }
 
 }
 
-static mut S_STATE: RefCell<Option<GameState>> = RefCell::new(None);
+static mut S_STATES: RefCell<Vec<GameState>> = RefCell::new(Vec::new());
 
 #[wasm_bindgen]
-pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx: JsValue, _sounds: JsValue) {
+pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx: JsValue, _sounds: JsValue) -> usize {
     set_panic_hook();
-    
+
     let game_config: OuterConfig = serde_wasm_bindgen::from_value(config).unwrap();
 
     let offscreen_canvas = OffscreenCanvas::new(2560, 1440).expect("offscreen canvas");
@@ -244,18 +244,20 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
 
     unsafe {
         #[allow(static_mut_refs)]
-        S_STATE.get_mut().replace(state);
+        let states = S_STATES.get_mut();
+        states.push(state);
+        states.len()-1
     }
-    
+
 }
 
 fn run_frame_imp(state: &mut GameState) {
     let now = Instant::now();
     state.frame_times.push((now, now));
-    
+
     state.think();
     state.draw();
-    
+
     state.frame_times.last_mut().unwrap().1 = Instant::now();
 }
 
@@ -263,7 +265,7 @@ fn run_frame_imp(state: &mut GameState) {
 pub fn run_frame(){
     unsafe {
         #[allow(static_mut_refs)]
-        if let Some(state) = &mut *S_STATE.borrow_mut() {
+        for state in &mut *S_STATES.borrow_mut() {
             run_frame_imp(state);
         }
     }
@@ -311,7 +313,7 @@ pub fn update_config(config: JsValue) {
         Ok(cfg) => {
             unsafe {
                 #[allow(static_mut_refs)]
-                if let Some(state) = &mut *S_STATE.borrow_mut() {
+                for state in &mut *S_STATES.borrow_mut() {
                     state.update_config(&cfg);
                 }
             }
@@ -323,22 +325,18 @@ pub fn update_config(config: JsValue) {
 }
 
 #[wasm_bindgen]
-pub fn be_host() {
+pub fn be_host(state_idx: usize) {
     unsafe {
         #[allow(static_mut_refs)]
-        if let Some(state) = &mut *S_STATE.borrow_mut() {
-            state.be_host();
-        }
+        S_STATES.borrow_mut()[state_idx].be_host();
     }
 }
 
 #[wasm_bindgen]
-pub fn be_client() {
+pub fn be_client(state_idx: usize) {
     unsafe {
         #[allow(static_mut_refs)]
-        if let Some(state) = &mut *S_STATE.borrow_mut() {
-            state.be_client();
-        }
+        S_STATES.borrow_mut()[state_idx].be_client();
     }
 }
 
@@ -346,7 +344,7 @@ pub fn be_client() {
 pub fn ping_connections() {
     unsafe {
         #[allow(static_mut_refs)]
-        if let Some(state) = &mut *S_STATE.borrow_mut() {
+        for state in &mut *S_STATES.borrow_mut() {
             state.ping_connections();
         }
     }
