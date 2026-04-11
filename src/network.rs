@@ -102,6 +102,10 @@ impl StreamHandle {
         Self { handle, stream_id }
     }
 
+    pub fn handle(&self) -> NetworkHandle {
+        self.handle
+    }
+
     pub fn sibling(&self, stream_id: i32) -> Self {
         Self { handle: self.handle, stream_id }
     }

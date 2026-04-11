@@ -202,16 +202,17 @@ impl HostPlayer {
     }
 
     /// Ensure that we have a peer_stream for every stream in 'other_streams', except for our own players_stream
-    fn ensure_peer_streams(&mut self, game: &mut dyn BaseGame, other_streams: &Vec<PlayersStream>) {
-        if let Some(my_stream) = self.players_stream {
-            for other_stream in other_streams {
-                if my_stream == *other_stream {
-                    continue;
-                }
+    fn ensure_peer_streams(&mut self, game: &mut dyn BaseGame, other_streams: &Vec<Option<PlayersStream>>) {
+        for other_stream_opt in other_streams {
+            if self.players_stream == *other_stream_opt {
+                continue;
+            }
 
-                let name = &self.name;
+            let name = &self.name;
 
-                let my_snake = &mut self.snake;
+            let my_snake = &mut self.snake;
+
+            if let Some(other_stream) = other_stream_opt {
                 self.peer_streams.entry(*other_stream).or_insert_with(|| {
                     // Make a new peer_stream between us and 'other_stream'
                     let new_stream = game.network().new_sibling_stream(&other_stream.0).unwrap();
@@ -294,7 +295,7 @@ impl HostPlayerManager {
     pub fn think(&mut self, game: &mut dyn BaseGame, config: &PlayerManagerConfig) {
         let mut closed_handles: Vec<NetworkHandle> = Vec::new();
 
-        let mut new_players: Vec<(PlayersStream, PlayerStream)> = Vec::new();
+        let mut new_players: Vec<Option<PlayersStream>> = Vec::new();
 
         // Process all players (including host at key None)
         for (handle_opt, player) in self.players.iter_mut() {
@@ -334,7 +335,7 @@ impl HostPlayerManager {
                             player.name = msg.name.clone();
                             player.player_stream = Some(player_stream);
 
-                            new_players.push((stream, player_stream));
+                            new_players.push(Some(stream));
 
                             true
                         }
@@ -357,68 +358,31 @@ impl HostPlayerManager {
             }
         }
 
-        // TODO to fix this, collect a 'newPlayersInfos<(client_info fields) above as new players get added, instead of the first two parts of this if
-
         if !new_players.is_empty() {
             // Figure out the pre-existing players
-            let mut old_players: Vec<(PlayersStream, PlayerStream)> = Vec::new();
+            let mut old_players: Vec<Option<PlayersStream>> = Vec::new();
             for (_, player) in self.players.iter() {
-                if let (Some(pss), Some(ps)) = (player.players_stream, player.player_stream) {
-                    if new_players.iter().all(|(nps, _)| *nps != pss) {
-                        old_players.push((pss, ps));
-                    }
+                if new_players.iter().all(|nps| *nps != player.players_stream) {
+                    old_players.push(player.players_stream);
                 }
             }
 
-            // Add new clients as peers to the host's snake
-            if let Some(host_player) = self.players.get_mut(&None) {
-                if let Some(host_snake) = &mut host_player.snake {
-                    for (client_players_stream, player_stream) in new_players {
-                        let host_snake_stream = game.network().new_sibling_stream(&player_stream.0).unwrap();
-                        host_snake.add_peer(host_snake_stream);
-
-                        // Create a player stream for the host on the client side
-                        let host_player_stream = game.network().new_sibling_stream(&client_players_stream.0).unwrap();
-
-                        // Tell the client about the host player
-                        client_players_stream.send(game, PlayersMsg::NewPlayer(NewPlayerMsg {
-                            name: "Host".to_string(),
-                            player_stream: host_player_stream.stream_id(),
-                        }));
-
-                        // Now send the NewSnake message to the host's player stream on the client
-                        PlayerStream(host_player_stream).send(game, PlayerMsg::NewSnake(NewSnakeMsg {
-                            pos: config.snake_start_points[0], // Host's position
-                            snake_stream: host_snake_stream.stream_id(),
-                        }));
-                    }
-                }
+            // new players need streams for all the existing players
+            for pss in new_players.iter() {
+                let key = match pss {
+                    None => None,
+                    Some(pss) => Some(pss.0.handle())
+                };
+                self.players.get_mut(&key).unwrap().ensure_peer_streams(game, &old_players);
             }
 
-            // Make sure each player has a player_stream for every other player.  Collect all of our peer_streams,
-            // and then make sure each player has a player_stream for each of them
-            let mut players_streams = Vec::<PlayersStream>::new();
-            for (handle_opt, player) in self.players.iter() {
-                // Skip the host player (None key)
-                if handle_opt.is_some() {
-                    if let Some(str) = player.players_stream {
-                        players_streams.push(str);
-                    }
-                }
-            }
-
-            // TODO simplify, redo all this.  Should just need to essentially do
-            // for p1 in players
-            //  for p2 in players:
-            //   if p1 != p2 and p1 doesn't have a stream for p2, add a stream for p2 *and* a snake peer.
-            //
-            //  just need to figure out how to do this with rust
-
-            for (handle_opt, player) in self.players.iter_mut() {
-                // Only clients need peer streams (not the host)
-                if handle_opt.is_some() {
-                    player.ensure_peer_streams(game, &players_streams);
-                }
+            // old players need streams for all the new players
+            for pss in old_players.iter() {
+                let key = match pss {
+                    None => None,
+                    Some(pss) => Some(pss.0.handle())
+                };
+                self.players.get_mut(&key).unwrap().ensure_peer_streams(game, &new_players);
             }
         }
     }
