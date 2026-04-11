@@ -1,6 +1,6 @@
 
 
-use engine_p::interpolable::{Interpolable, Pos2d}; 
+use engine_p::interpolable::{Interpolable, Pos2d};
 use serde::{Serialize,Deserialize};
 
 use crate::network::StreamHandle;
@@ -35,7 +35,7 @@ fn read_snake_msgs(updates: Vec<NetMsg>, stream: StreamHandle, cb: &mut dyn FnMu
             continue;
         }
 
-        log(&format!("Unexpected snake stream msg. Stream: {}, msg: {:?}", stream, &upd));                    
+        log(&format!("Unexpected snake stream msg. Stream: {}, msg: {:?}", stream, &upd));
     }
 }
 
@@ -70,7 +70,7 @@ impl OwnSnakeImp {
             if snake_points.last().unwrap().dist(snake_points[snake_points.len()-2]) > 20.0 {
                 snake_points.push(*snake_points.last().unwrap());
             }
-            
+
             data.points_changed = true;
         }
         else if !game.mouse().is_down() && snake_points.len() > 2 {
@@ -107,19 +107,19 @@ impl RemoteSnakeImp {
                         log(&format!("Snake({}) not enough segments for update: {:?}", data.name, msg));
                         game.network().send(&self.stream, NetMsg::Snake(SnakeMsg::FullUpdateReq));
                         return;
-                    } 
-                    
+                    }
+
                     if data.points_sum(upd.prev_segs) != upd.prev_segs_sum {
                         log(&format!("Snake({}) prev_segs_sum wrong for update: {:?}", data.name, msg));
                         game.network().send(&self.stream, NetMsg::Snake(SnakeMsg::FullUpdateReq));
                         return;
                     }
-                    
+
                     // Update can be processed fine
                     let pts = &mut data.snake_points;
                     pts.truncate(upd.prev_segs);
                     upd.last_segs.iter().for_each(|p| pts.push(*p));
-                    
+
                     data.points_changed = true;
                 },
                 _ => {
@@ -155,7 +155,7 @@ impl SnakePeer {
                 }
             }
         });
-        
+
         if data.points_changed && self.next_send_time < game.now() {
             // Time to send our points update.  Send our last 2 points in diffs only.  This should hopefully
             // be good enough and not require too many full updates
@@ -205,7 +205,7 @@ impl Snake {
             peers: Vec::new(),
         }
     }
-    
+
     pub fn new_remote(name: &str, stream: StreamHandle, start_pos: &Pos2d) -> Self {
         Self {
             data: SnakeData {
@@ -220,21 +220,19 @@ impl Snake {
             peers: Vec::new(),
         }
     }
-    
+
     pub fn add_peer(&mut self, stream: StreamHandle) {
         self.peers.push(SnakePeer {
             stream,
             next_send_time: 0.0,
         });
     }
-    
+
     // Return our start_points (first 2 points of the snake)
-    /*
     pub fn get_start_pos(&self) -> Pos2d {
         self.data.snake_points[0]
     }
-    */
-    
+
     // Handle per-frame processing
     pub fn think(&mut self, game: &mut dyn BaseGame, config: &SnakeConfig) {
         self.data.points_changed = false;
@@ -246,12 +244,12 @@ impl Snake {
         if let Some(remote) = &mut self.remote_imp {
             remote.think(&mut self.data, game);
         }
-        
+
         for peer in self.peers.iter_mut() {
             peer.think(&mut self.data, game);
         }
     }
-    
+
     // Draw our snake
     pub fn draw(&self, game: &dyn BaseGame) {
         let canvas = game.painter().canvas();

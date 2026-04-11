@@ -12,24 +12,25 @@ use std::rc::Rc;
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
+
 }
 
 #[wasm_bindgen(module = "https://esm.sh/peerjs@1.5.5?bundle-deps")]
 extern "C" {
     type Peer;
-    
+
     #[wasm_bindgen(constructor)]
     fn new_with_str(endpoing: &str) -> Peer;
 
     #[wasm_bindgen(constructor)]
     fn new() -> Peer;
-    
+
     #[wasm_bindgen(method)]
     fn destroy(peer: &Peer);
-    
+
     #[wasm_bindgen(method, js_name="on")]
     fn on_cb(peer: &Peer, event: &str, cb: &JsValue);
-    
+
     #[wasm_bindgen(method)]
     fn connect(peer: &Peer, id: &str) -> JsValue;
 }
@@ -43,13 +44,13 @@ extern "C" {
 
     #[wasm_bindgen(method)]
     fn send(dc: &DataConnection, msg: &JsValue);
-    
+
     #[wasm_bindgen(method)]
     fn close(dc: &DataConnection);
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct NetData<MSG> 
+pub struct NetData<MSG>
 where MSG: fmt::Debug + Serialize
 {
     pub stream_id: i32,
@@ -76,7 +77,7 @@ impl NetworkHandle {
     }
 
     // ACCESSORS
-    
+
     /// Return the default stream (stream 0) for this handle
     pub fn default_stream(&self) -> StreamHandle {
         StreamHandle::new(*self, 0)
@@ -100,7 +101,7 @@ impl StreamHandle {
     pub fn new(handle: NetworkHandle, stream_id: i32) -> Self {
         Self { handle, stream_id }
     }
-    
+
     pub fn sibling(&self, stream_id: i32) -> Self {
         Self { handle: self.handle, stream_id }
     }
@@ -276,7 +277,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
         let local_address: String = address.into();
         let open_closure = Closure::<dyn FnMut(String)>::new(move |id: String| {
             log(&format!("Net(Peer::open) handle: {}, address: {}, id: {}", &handle, &local_address, &id));
-            
+
             let open_imp = &mut *imp_ref.borrow_mut();
             match open_imp.handle_map.get_mut(&handle) {
                 Some(info) => {
@@ -284,12 +285,12 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
                     NetworkManagerImp::<MSG>::handle_new_connection(imp_ref.clone(), info, dc, handle, handle);
                 },
                 None => {
-                    log(&format!("Net(Peer::open) handle:{} already closed", &handle));                    
+                    log(&format!("Net(Peer::open) handle:{} already closed", &handle));
                 }
             }
         });
         new_peer.on_cb("open", open_closure.as_ref().unchecked_ref());
-        
+
         let error_closure = Closure::<dyn FnMut(JsValue)>::new(move |err| {
             log(&format!("Net(Peer::error) handle: {}, err: {:?}", &handle, &err));
             // TODO handle
@@ -305,7 +306,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
 
         NetworkHandle { 0: handle }
     }
-    
+
     pub fn listen(&self, address: &str) -> NetworkHandle {
         let imp = &mut *self.imp.borrow_mut();
 
@@ -326,9 +327,9 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
             inner_imp.next_handle += 1;
 
             log(&format!("Net(Peer::connection) handle: {}, new_handle: {}", &handle, &dc_handle));
-            
+
             let mut conn_peer = PeerInfo::<MSG>::new(true);
-            
+
             NetworkManagerImp::<MSG>::handle_new_connection(imp_ref.clone(), &mut conn_peer, dc, handle, dc_handle);
             inner_imp.handle_map.insert(dc_handle, conn_peer);
         });
@@ -350,8 +351,8 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
 
         NetworkHandle { 0: handle }
     }
-    
-    /// Cancel the operation/close the connection associted with the specified 'handle'
+
+    /// Cancel the operation/close the connection associated with the specified 'handle'
     pub fn _close(&mut self, NetworkHandle(handle): NetworkHandle) {
         let imp = &mut *self.imp.borrow_mut();
 
@@ -370,7 +371,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
             }
         }
     }
-    
+
     /// Send the specified 'msg' over the specified 'stream'
     pub fn send(&mut self, stream: &StreamHandle, msg: MSG) {
         let imp = &mut *self.imp.borrow_mut();
@@ -381,7 +382,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
         };
 
         let encoded = serde_wasm_bindgen::to_value(&send_msg).unwrap();
-        
+
         match imp.handle_map.get(&stream.handle.0) {
             Some(info) => {
                 match &info._dc {
@@ -399,7 +400,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
             }
         }
     }
-    
+
     /// Return a new stream_id for the specified 'peer'
     pub fn new_stream(&mut self, NetworkHandle(handle): NetworkHandle) -> Option<StreamHandle> {
         let imp = &mut *self.imp.borrow_mut();
@@ -412,7 +413,7 @@ where MSG: Serialize + DeserializeOwned + fmt::Debug + 'static {
     pub fn new_sibling_stream(&mut self, stream: &StreamHandle) -> Option<StreamHandle> {
         self.new_stream(stream.handle)
     }
-    
+
     /// Return all the received updates for the specified 'handle
     pub fn get_handle_events(&mut self, NetworkHandle(handle): NetworkHandle) -> Vec<NetUpdate> {
         let imp = &mut *self.imp.borrow_mut();

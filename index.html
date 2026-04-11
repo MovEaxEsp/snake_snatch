@@ -211,14 +211,13 @@
 
           init_state(gameConfig, newCanvas, images, audioCtx, sounds);
         })
+
+        window.addEventListener('resize', () => {
+          for (let i = 0; i < numCanvases; ++i) {
+            resizeCanvas(document.getElementById(`canvas${i}`));
+          }
+        }, false);
       }
-
-      window.addEventListener('resize', () => {
-        for (let i = 0; i < numCanvases; ++i) {
-          resizeCanvas(document.getElementById(`canvas${i}`));
-        }
-      }, false);
-
       run();
 </script>
 
