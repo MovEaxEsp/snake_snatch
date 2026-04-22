@@ -1,7 +1,7 @@
 
 use crate::network::{NetUpdate, NetworkHandle, StreamHandle};
 use crate::snake::{Snake, SnakeConfig};
-use crate::traits::{BaseGame, NetMsg};
+use crate::traits::{BaseGame, NewClientMsg, NetMsg};
 use crate::utils::log;
 
 use engine_p::interpolable::Pos2d;
@@ -387,7 +387,7 @@ impl HostPlayerManager {
         }
     }
 
-    fn draw(&self, game: &dyn BaseGame) {
+    pub fn draw(&self, game: &dyn BaseGame) {
         for (_, player) in self.players.iter() {
             player.draw(game);
         }
@@ -455,7 +455,19 @@ pub struct ClientPlayerManager {
 }
 
 impl ClientPlayerManager {
-    pub fn new(self_name: &str, host_players_stream: StreamHandle, player_stream: StreamHandle) -> Self {
+    pub fn new(self_name: &str, host_handle: NetworkHandle, game: &mut dyn BaseGame) -> Self {
+        let players_stream = game.network().new_stream(host_handle).unwrap();
+        let player_stream = game.network().new_stream(host_handle).unwrap();
+
+        game.network().send(&host_handle.default_stream(), NetMsg::NewClient(NewClientMsg {
+            players_stream: players_stream.stream_id(),
+        }));
+
+        game.network().send(&players_stream, NetMsg::Players(PlayersMsg::NewPlayer(NewPlayerMsg {
+            name: "GameClient".to_string(),
+            player_stream: player_stream.stream_id(),
+        })));
+
         let self_player = ClientPlayer {
             is_local: true,
             name: self_name.to_string(),
@@ -467,7 +479,7 @@ impl ClientPlayerManager {
             players: HashMap::from([
                 (player_stream, self_player)
             ]),
-            host_players_stream: PlayersStream{0:host_players_stream},
+            host_players_stream: PlayersStream{0:players_stream},
         }
     }
 
@@ -495,64 +507,9 @@ impl ClientPlayerManager {
         }
     }
 
-    fn draw(&self, game: &dyn BaseGame) {
+    pub fn draw(&self, game: &dyn BaseGame) {
         for (_, player) in self.players.iter() {
             player.draw(game);
-        }
-    }
-}
-
-pub enum PlayerManager {
-    Unset,
-    Client(ClientPlayerManager),
-    Host(HostPlayerManager),
-}
-
-impl PlayerManager {
-    pub fn new_client(self_name: &str, host_players_stream: &StreamHandle, player_stream: &StreamHandle) -> Self {
-        PlayerManager::Client(ClientPlayerManager::new(self_name, *host_players_stream, *player_stream))
-    }
-
-    pub fn new_host(self_name: &str, config: &PlayerManagerConfig) -> Self {
-        PlayerManager::Host(HostPlayerManager::new(self_name, config))
-    }
-
-    pub fn add_client(&mut self, handle: NetworkHandle) {
-        match self {
-            Self::Host(mgr) => {
-                mgr.add_client(handle);
-            }
-            _ => {
-                log(&format!("Bad PlayerManager type for add_client"));
-            }
-        }
-    }
-
-    pub fn think(&mut self, game: &mut dyn BaseGame, config: &PlayerManagerConfig) {
-        match self {
-            Self::Host(mgr) => {
-                mgr.think(game, config);
-            }
-            Self::Client(mgr) => {
-                mgr.think(game, config);
-            }
-            Self::Unset => {
-                // Nothing
-            }
-        }
-    }
-
-    pub fn draw(&self, game: &dyn BaseGame) {
-        match self {
-            Self::Host(mgr) => {
-                mgr.draw(game);
-            }
-            Self::Client(mgr) => {
-                mgr.draw(game);
-            }
-            Self::Unset => {
-                // Nothing
-            }
         }
     }
 }

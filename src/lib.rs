@@ -1,3 +1,4 @@
+mod game;
 mod mouse;
 mod network;
 mod painter;
@@ -8,9 +9,10 @@ mod utils;
 
 use engine_p::interpolable::{Pos2d};
 use mouse::MouseManager;
-use network::{NetworkHandle, NetworkManager, NetUpdate};
+use network::NetworkManager;
 use painter::{Painter, TextConfig};
-use players::{NewPlayerMsg, PlayerManager, PlayerManagerConfig, PlayersMsg};
+use game::{GameManager, GameManagerConfig};
+use players::PlayerManagerConfig;
 use serde::{Serialize,Deserialize};
 use snake::{SnakeConfig};
 use traits::{BaseGame, NetMsg};
@@ -32,7 +34,7 @@ pub struct UiConfig {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameConfig {
-    pub player_manager: PlayerManagerConfig,
+    pub game_manager: GameManagerConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -86,9 +88,7 @@ struct GameState {
     frame_times: Vec<(Instant, Instant)>, // for measuring elapsed_time, fps
     fps_str: String,
     imp: GameImp,
-    listen_handle: Option<NetworkHandle>,
-    connect_handle: Option<NetworkHandle>,
-    player_manager: PlayerManager,
+    game_manager: GameManager,
 }
 
 impl GameState {
@@ -111,47 +111,10 @@ impl GameState {
             self.fps_str = format!("{:.2} FPS ({:2.2} %)", fps, processing_pct);
         }
 
-        // Check for network messages
-        if let Some(hndl) = self.listen_handle {
-            for msg in self.imp.network().get_handle_events(hndl).into_iter() {
-                log(&format!("Listen event: {:?}", msg));
-                if let NetUpdate::NewPeer(new_corr) = msg {
-                    // Inform any connecting peers about possible start points
-                    let client_handle = NetworkHandle::from_correlator(new_corr);
-                    self.player_manager.add_client(client_handle);
-                }
-            }
-        }
-        if let Some(hndl) = self.connect_handle {
-            for outer in self.imp.network().get_handle_events(hndl).into_iter() {
-                match outer {
-                    NetUpdate::NewPeer(_) => {
-                        let players_stream = self.imp.network.new_stream(hndl).unwrap();
-                        let player_stream = self.imp.network.new_stream(hndl).unwrap();
-
-                        self.imp.network.send(&hndl.default_stream(), NetMsg::NewClient(traits::NewClientMsg {
-                            players_stream: players_stream.stream_id(),
-                        }));
-
-                        self.imp.network.send(&players_stream, NetMsg::Players(PlayersMsg::NewPlayer(NewPlayerMsg {
-                            name: "GameClient".to_string(),
-                            player_stream: player_stream.stream_id(),
-                        })));
-
-                        log(&format!("Successfully connected to host with handle {}", hndl));
-                        self.player_manager = PlayerManager::new_client("GameClient", &players_stream, &player_stream);
-                    }
-                    _ => {
-                        log(&format!("Connect failed/closed: {:?}", outer));
-                    }
-                }
-            }
-        }
-
         let config = self.imp.config.clone();
 
         self.imp.think();
-        self.player_manager.think(&mut self.imp, &config.game.player_manager);
+        self.game_manager.think(&mut self.imp, &config.game.game_manager);
     }
 
     fn draw(&self) {
@@ -166,7 +129,7 @@ impl GameState {
         canvas.set_fill_style_str(&cfg.arena_color);
         canvas.fill_rect(cfg.arena_pos.x, cfg.arena_pos.y, cfg.arena_width, cfg.arena_height);
 
-        self.player_manager.draw(&self.imp);
+        self.game_manager.draw(&self.imp);
 
         // Draw FPS
         self.imp.painter().draw_text(&self.fps_str, &(2000, 10).into(), 300.0, &self.imp.config.ui.fps);
@@ -190,12 +153,12 @@ impl GameState {
     }
 
     fn be_host(&mut self) {
-        self.player_manager = PlayerManager::new_host("GameHost", &self.imp.config.game.player_manager);
-        self.listen_handle = Some(self.imp.network().listen("moveaxesp-snake-snatch-game"));
+        let cfg = self.imp.config.game.game_manager.clone();
+        self.game_manager = GameManager::new_host(&mut self.imp, &cfg);
     }
 
     fn be_client(&mut self) {
-        self.connect_handle = Some(self.imp.network().connect("moveaxesp-snake-snatch-game"));
+        self.game_manager = GameManager::new_client(&mut self.imp);
     }
 
     fn ping_connections(&mut self) {
@@ -235,9 +198,7 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         game_start_instant: Instant::now(),
         imp: game_imp,
         fps_str: "".to_string(),
-        listen_handle: None,
-        connect_handle: None,
-        player_manager: PlayerManager::Unset,
+        game_manager: GameManager::Unset,
     };
 
     state.frame_times.push((Instant::now(), Instant::now()));
@@ -290,13 +251,15 @@ pub fn build_default_config() -> OuterConfig {
             arena_height: 1000.0,
         },
         game: GameConfig {
-            player_manager: PlayerManagerConfig {
-                snake_start_points: vec![
-                    (200, 200).into(), (600, 200).into(), (200, 600).into(), (600, 600).into()
-                ],
-                snake: SnakeConfig {
-                    grow_speed: 100.0,
-                },
+            game_manager: GameManagerConfig {
+                player_mgr: PlayerManagerConfig {
+                    snake_start_points: vec![
+                        (200, 200).into(), (600, 200).into(), (200, 600).into(), (600, 600).into()
+                    ],
+                    snake: SnakeConfig {
+                        grow_speed: 100.0,
+                    },
+                }
             }
         }
     }
