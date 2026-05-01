@@ -12,7 +12,7 @@ use engine_p::interpolable::{Pos2d};
 use mouse::MouseManager;
 use network::NetworkManager;
 use painter::{Painter, TextConfig};
-use game::{GameManager, GameManagerConfig, GameManagerUiConfig};
+use game::{GameManager, GameManagerConfig, GameManagerUiConfig, MainMenuUiConfig};
 use players::PlayerManagerConfig;
 use serde::{Serialize,Deserialize};
 use snake::{SnakeConfig};
@@ -165,18 +165,6 @@ impl GameState {
         //self.imp.painter.update_config(&cfg.ui.images);
     }
 
-    fn be_host(&mut self) {
-        let cfg = self.imp.config.game.game_manager.clone();
-        self.game_manager = GameManager::new_host(&mut self.imp, &cfg);
-    }
-
-    fn be_client(&mut self) {
-        self.game_manager = GameManager::new_client(&mut self.imp);
-    }
-
-    fn ping_connections(&mut self) {
-    }
-
 }
 
 static mut S_STATES: RefCell<Vec<GameState>> = RefCell::new(Vec::new());
@@ -211,7 +199,7 @@ pub fn init_state(config: JsValue, canvas: JsValue, _images: JsValue, _audio_ctx
         game_start_instant: Instant::now(),
         imp: game_imp,
         fps_str: "".to_string(),
-        game_manager: GameManager::Unset,
+        game_manager: GameManager::new(),
     };
 
     state.frame_times.push((Instant::now(), Instant::now()));
@@ -263,16 +251,31 @@ pub fn build_default_config() -> OuterConfig {
         }
     }
 
-    let button_text = TextConfig {
-        offset: (0,40).into(),
-        stroke: false,
-        style: "black".to_string(),
-        font: "comis sans".to_string(),
-        size: 48,
-        center_and_fit: true,
-        is_command: false,
-        alpha: 0.9,
-    };
+    fn default_button(x: f64, y: f64, text: &str) -> ButtonConfig {
+        ButtonConfig {
+            bg_normal: BackgroundConfig {
+                offset: (x,y).into(),
+                ..button_bg()
+            },
+            bg_disabled: button_bg(),
+            bg_pressed: BackgroundConfig {
+                bg_alpha: 0.8,
+                offset: (x,y).into(),
+                ..button_bg()
+            },
+            text_cfg: TextConfig {
+                offset: (0,40).into(),
+                stroke: false,
+                style: "black".to_string(),
+                font: "comis sans".to_string(),
+                size: 48,
+                center_and_fit: true,
+                is_command: false,
+                alpha: 0.9,
+            },
+            text: text.to_string(),
+        }
+    }
 
     OuterConfig {
         ui: UiConfig {
@@ -301,25 +304,9 @@ pub fn build_default_config() -> OuterConfig {
                     alpha: 0.7,
                     is_command: false,
                 },
-                test_button: ButtonConfig {
-                    bg_normal: BackgroundConfig {
-                        offset: (300,400).into(),
-                        ..button_bg()
-                    },
-                    bg_disabled: BackgroundConfig {
-                        bg_style: "white".to_string(),
-                        offset: (300,400).into(),
-                        ..button_bg()
-                    },
-                    bg_pressed: BackgroundConfig {
-                        bg_alpha: 0.8,
-                        offset: (300,400).into(),
-                        ..button_bg()
-                    },
-                    text_cfg: TextConfig {
-                        ..button_text
-                    },
-                    text: "Test Button".to_string(),
+                main_menu: MainMenuUiConfig {
+                    host_button: default_button(400.0, 400.0, "Host Game"),
+                    join_button: default_button(400.0, 700.0, "Join Game"),
                 }
             }
         },
@@ -356,32 +343,6 @@ pub fn update_config(config: JsValue) {
         }
         Err(e) => {
             log(&format!("Failed parsing config: {}", e));
-        }
-    }
-}
-
-#[wasm_bindgen]
-pub fn be_host(state_idx: usize) {
-    unsafe {
-        #[allow(static_mut_refs)]
-        S_STATES.borrow_mut()[state_idx].be_host();
-    }
-}
-
-#[wasm_bindgen]
-pub fn be_client(state_idx: usize) {
-    unsafe {
-        #[allow(static_mut_refs)]
-        S_STATES.borrow_mut()[state_idx].be_client();
-    }
-}
-
-#[wasm_bindgen]
-pub fn ping_connections() {
-    unsafe {
-        #[allow(static_mut_refs)]
-        for state in &mut *S_STATES.borrow_mut() {
-            state.ping_connections();
         }
     }
 }

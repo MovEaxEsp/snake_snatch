@@ -37,10 +37,58 @@ pub struct GameManagerConfig {
     pub player_mgr: PlayerManagerConfig,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MainMenuUiConfig {
+    pub host_button: ButtonConfig,
+    pub join_button: ButtonConfig,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct GameManagerUiConfig {
     pub player_names: TextConfig,
-    pub test_button: ButtonConfig,
+    pub main_menu: MainMenuUiConfig,
+}
+
+// MainMenu
+// Main menu handler, before hosting or joining a game
+pub struct MainMenuManager {
+    host_button: Button,
+    join_button: Button,
+}
+
+pub enum MainMenuManagerThinkResult {
+    HostGame,
+    JoinGame,
+}
+
+impl MainMenuManager {
+    fn new() -> Self {
+        MainMenuManager {
+            host_button: Button::new(),
+            join_button: Button::new(),
+        }
+    }
+
+    fn think(&mut self, game: &dyn BaseGame, ui_cfg: &MainMenuUiConfig) -> Option<MainMenuManagerThinkResult> {
+        for res in self.host_button.think(game.mouse(), &ui_cfg.host_button) {
+            match res {
+                ButtonThinkResult::Clicked => return Some(MainMenuManagerThinkResult::HostGame),
+            }
+        }
+
+        for res in self.join_button.think(game.mouse(), &ui_cfg.join_button) {
+            match res {
+                ButtonThinkResult::Clicked => return Some(MainMenuManagerThinkResult::JoinGame),
+            }
+        }
+
+        None
+    }
+
+    fn draw(&self, game: &dyn BaseGame, ui_cfg: &MainMenuUiConfig) {
+        self.host_button.draw(game.mouse(), game.painter(), &ui_cfg.host_button);
+        self.join_button.draw(game.mouse(), game.painter(), &ui_cfg.join_button);
+    }
 }
 
 // Enums
@@ -62,8 +110,6 @@ pub struct HostGameManager {
     _coins: Vec<Pos2d>,
     players: HostPlayerManager,
 
-    test_button: Button,
-
     // Map from connection to our GameStream for it
     _streams: HashMap<NetworkHandle, StreamHandle>,
 }
@@ -76,11 +122,10 @@ impl HostGameManager {
             _coins: Vec::new(),
             players: HostPlayerManager::new("GameHost", &config.player_mgr),
             _streams: HashMap::new(),
-            test_button: Button::new(),
         }
     }
 
-    fn think(&mut self, game: &mut dyn BaseGame, config: &GameManagerConfig, ui_cfg: &GameManagerUiConfig) {
+    fn think(&mut self, game: &mut dyn BaseGame, config: &GameManagerConfig, _ui_cfg: &GameManagerUiConfig) {
         for msg in game.network().get_handle_events(self.listen_handle).into_iter() {
             if let NetUpdate::NewPeer(new_corr) = msg {
                 // Inform any connecting peers about possible start points
@@ -90,17 +135,10 @@ impl HostGameManager {
         }
 
         self.players.think(game, &config.player_mgr);
-        for evt in self.test_button.think(game.mouse(), &ui_cfg.test_button) {
-            match evt {
-                ButtonThinkResult::Clicked => log("Button Clicked"),
-            }
-        }
     }
 
-    fn draw(&self, game: &dyn BaseGame, ui_cfg: &GameManagerUiConfig) {
+    fn draw(&self, game: &dyn BaseGame, _ui_cfg: &GameManagerUiConfig) {
         self.players.draw(game);
-
-        self.test_button.draw(game.mouse(), game.painter(), &ui_cfg.test_button);
     }
 }
 
@@ -150,33 +188,36 @@ impl ClientGameManager {
 }
 
 pub enum GameManager {
-    Unset,
+    MainMenu(MainMenuManager),
     Host(HostGameManager),
     Client(ClientGameManager),
 }
 
 impl GameManager {
-    pub fn new_client(game: &mut dyn BaseGame) -> Self {
-        GameManager::Client(ClientGameManager::new(game))
-    }
-
-    pub fn new_host(game: &mut dyn BaseGame, config: &GameManagerConfig) -> Self {
-        GameManager::Host(HostGameManager::new(game, config))
+    pub fn new() -> Self {
+        GameManager::MainMenu(MainMenuManager::new())
     }
 
     pub fn think(&mut self, game: &mut dyn BaseGame, config: &GameManagerConfig, ui_cfg: &GameManagerUiConfig) {
         match self {
+            Self::MainMenu(mgr) => {
+                if let Some(res) = mgr.think(game, &ui_cfg.main_menu) {
+                    match res {
+                        MainMenuManagerThinkResult::HostGame => *self = GameManager::Host(HostGameManager::new(game, config)),
+                        MainMenuManagerThinkResult::JoinGame => *self = GameManager::Client(ClientGameManager::new(game)),
+                    }
+                }
+            },
             Self::Host(mgr) => mgr.think(game, config, ui_cfg),
             Self::Client(mgr) => mgr.think(game, config),
-            Self::Unset => {}
         }
     }
 
     pub fn draw(&self, game: &dyn BaseGame, ui_cfg: &GameManagerUiConfig) {
         match self {
+            Self::MainMenu(mgr) => mgr.draw(game, &ui_cfg.main_menu),
             Self::Host(mgr) => mgr.draw(game, ui_cfg),
             Self::Client(mgr) => mgr.draw(game),
-            Self::Unset => {}
         }
     }
 }

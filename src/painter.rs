@@ -6,7 +6,7 @@ use serde::{Serialize,Deserialize};
 use web_sys::OffscreenCanvasRenderingContext2d;
 
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BackgroundConfig {
     pub offset: Pos2d,
     pub width: f64,
@@ -19,7 +19,7 @@ pub struct BackgroundConfig {
     pub bg_alpha: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TextConfig {
     pub offset: Pos2d,
     pub stroke: bool,
@@ -84,9 +84,11 @@ impl Painter {
         advance_color(&mut self.keyword_b, elapsed_time);
     }
 
+    /*
     pub fn set_global_alpha(&self, alpha: f64) {
         self.canvas.set_global_alpha(alpha);
     }
+    */
 
     pub fn draw_area_background(&self, pos: &Pos2d, cfg: &BackgroundConfig) {
         let c = &self.canvas;

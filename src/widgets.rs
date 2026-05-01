@@ -5,7 +5,7 @@ use serde::{Serialize,Deserialize};
 
 // Button
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ButtonConfig {
     pub bg_normal: BackgroundConfig,
     pub bg_pressed: BackgroundConfig,

@@ -4,9 +4,6 @@ export function init_state(config: any, canvas: any, _images: any, _audio_ctx: a
 export function run_frame(): void;
 export function default_config(): any;
 export function update_config(config: any): void;
-export function be_host(state_idx: number): void;
-export function be_client(state_idx: number): void;
-export function ping_connections(): void;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -16,9 +13,6 @@ export interface InitOutput {
   readonly run_frame: () => void;
   readonly default_config: () => any;
   readonly update_config: (a: any) => void;
-  readonly be_host: (a: number) => void;
-  readonly be_client: (a: number) => void;
-  readonly ping_connections: () => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;
@@ -26,7 +20,7 @@ export interface InitOutput {
   readonly __wbindgen_export_4: WebAssembly.Table;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __wbindgen_export_6: WebAssembly.Table;
-  readonly closure158_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure167_externref_shim: (a: number, b: number, c: any) => void;
   readonly _dyn_core__ops__function__FnMut__A____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h91e20dea096362d0: (a: number, b: number, c: number, d: number) => void;
   readonly _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hf5bff3e679e80467: (a: number, b: number) => void;
   readonly __wbindgen_start: () => void;
