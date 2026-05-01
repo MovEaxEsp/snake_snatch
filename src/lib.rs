@@ -6,12 +6,13 @@ mod players;
 mod snake;
 mod traits;
 mod utils;
+mod widgets;
 
 use engine_p::interpolable::{Pos2d};
 use mouse::MouseManager;
 use network::NetworkManager;
 use painter::{Painter, TextConfig};
-use game::{GameManager, GameManagerConfig};
+use game::{GameManager, GameManagerConfig, GameManagerUiConfig};
 use players::PlayerManagerConfig;
 use serde::{Serialize,Deserialize};
 use snake::{SnakeConfig};
@@ -23,6 +24,9 @@ use web_time::Instant;
 
 use std::cell::RefCell;
 
+use crate::painter::BackgroundConfig;
+use crate::widgets::{ButtonConfig};
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct UiConfig {
     pub fps: TextConfig,
@@ -30,6 +34,7 @@ pub struct UiConfig {
     pub arena_pos: Pos2d,
     pub arena_width: f64,
     pub arena_height: f64,
+    pub game_manager: GameManagerUiConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -79,6 +84,10 @@ impl GameImp {
     fn think(&mut self) {
         self.painter.think(self.elapsed_time);
     }
+
+    fn post_think(&mut self) {
+        self.mouse.post_think();
+    }
 }
 
 struct GameState {
@@ -114,7 +123,11 @@ impl GameState {
         let config = self.imp.config.clone();
 
         self.imp.think();
-        self.game_manager.think(&mut self.imp, &config.game.game_manager);
+        self.game_manager.think(&mut self.imp, &config.game.game_manager, &config.ui.game_manager);
+    }
+
+    fn post_think(&mut self) {
+        self.imp.post_think();
     }
 
     fn draw(&self) {
@@ -129,7 +142,7 @@ impl GameState {
         canvas.set_fill_style_str(&cfg.arena_color);
         canvas.fill_rect(cfg.arena_pos.x, cfg.arena_pos.y, cfg.arena_width, cfg.arena_height);
 
-        self.game_manager.draw(&self.imp);
+        self.game_manager.draw(&self.imp, &cfg.game_manager);
 
         // Draw FPS
         self.imp.painter().draw_text(&self.fps_str, &(2000, 10).into(), 300.0, &self.imp.config.ui.fps);
@@ -219,6 +232,8 @@ fn run_frame_imp(state: &mut GameState) {
     state.think();
     state.draw();
 
+    state.post_think();
+
     state.frame_times.last_mut().unwrap().1 = Instant::now();
 }
 
@@ -233,6 +248,32 @@ pub fn run_frame(){
 }
 
 pub fn build_default_config() -> OuterConfig {
+
+    fn button_bg() -> BackgroundConfig {
+        BackgroundConfig {
+            offset: (0,0).into(),
+            width: 400.0,
+            height: 128.0,
+            corner_radius: 10.0,
+            border_style: "solid".to_string(),
+            border_alpha: 0.8,
+            border_width: 1.0,
+            bg_style: "gray".to_string(),
+            bg_alpha: 0.4
+        }
+    }
+
+    let button_text = TextConfig {
+        offset: (0,40).into(),
+        stroke: false,
+        style: "black".to_string(),
+        font: "comis sans".to_string(),
+        size: 48,
+        center_and_fit: true,
+        is_command: false,
+        alpha: 0.9,
+    };
+
     OuterConfig {
         ui: UiConfig {
             fps: TextConfig {
@@ -249,6 +290,38 @@ pub fn build_default_config() -> OuterConfig {
             arena_pos: (200,200).into(),
             arena_width: 1000.0,
             arena_height: 1000.0,
+            game_manager: GameManagerUiConfig {
+                player_names: TextConfig {
+                    offset: (1500, 300).into(),
+                    stroke: false,
+                    style: "black".to_string(),
+                    font: "comic sans".to_string(),
+                    size: 30,
+                    center_and_fit: false,
+                    alpha: 0.7,
+                    is_command: false,
+                },
+                test_button: ButtonConfig {
+                    bg_normal: BackgroundConfig {
+                        offset: (300,400).into(),
+                        ..button_bg()
+                    },
+                    bg_disabled: BackgroundConfig {
+                        bg_style: "white".to_string(),
+                        offset: (300,400).into(),
+                        ..button_bg()
+                    },
+                    bg_pressed: BackgroundConfig {
+                        bg_alpha: 0.8,
+                        offset: (300,400).into(),
+                        ..button_bg()
+                    },
+                    text_cfg: TextConfig {
+                        ..button_text
+                    },
+                    text: "Test Button".to_string(),
+                }
+            }
         },
         game: GameConfig {
             game_manager: GameManagerConfig {

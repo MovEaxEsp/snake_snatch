@@ -19,24 +19,27 @@ struct MouseManagerImp {
     real_height: f64,
     is_down: bool,
     pos: Pos2d,
+    click_pos: Option<Pos2d>,
 }
 
 impl MouseManagerImp {
     fn handle_event(&mut self, event_type: MouseEventType, event_x: i32, event_y: i32) {
+        // Adjust event x and y for offscreen canvas coordinates
+        let width_factor = self.real_width / self.canvas.width() as f64;
+        let height_factor = self.real_height / self.canvas.height() as f64;
+
+        let rect = self.canvas.get_bounding_client_rect();
+        self.pos.x = (event_x as f64 - rect.left()) * width_factor;
+        self.pos.y = (event_y as f64 - rect.top()) * height_factor;
+
         if event_type == MouseEventType::Down {
             self.is_down = true;
         }
         else if event_type == MouseEventType::Up {
             self.is_down = false;
+            self.click_pos = Some(self.pos);
         }
 
-        // Adjust event x and y for offscreen canvas coordinates
-        let width_factor = self.real_width / self.canvas.width() as f64;
-        let height_factor = self.real_height / self.canvas.height() as f64;
-        
-        let rect = self.canvas.get_bounding_client_rect();
-        self.pos.x = (event_x as f64 - rect.left()) * width_factor;
-        self.pos.y = (event_y as f64 - rect.top()) * height_factor;
     }
 }
 
@@ -60,6 +63,7 @@ impl MouseManager {
             real_height,
             is_down: false,
             pos: (0,0).into(),
+            click_pos: None,
         }));
 
         // Mouse down
@@ -69,7 +73,7 @@ impl MouseManager {
             cb_imp.handle_event(MouseEventType::Down, evt.x(), evt.y());
         });
         canvas.set_onmousedown(Some(mouse_down_closure.as_ref().unchecked_ref()));
-        
+
         // Mouse up
         imp_ref = imp.clone();
         let mouse_up_closure = Closure::<dyn FnMut(MouseEvent)>::new(move |evt: MouseEvent| {
@@ -77,7 +81,7 @@ impl MouseManager {
             cb_imp.handle_event(MouseEventType::Up, evt.x(), evt.y());
         });
         canvas.set_onmouseup(Some(mouse_up_closure.as_ref().unchecked_ref()));
-        
+
         // Mouse move
         imp_ref = imp.clone();
         let mouse_move_closure = Closure::<dyn FnMut(MouseEvent)>::new(move |evt: MouseEvent| {
@@ -85,7 +89,7 @@ impl MouseManager {
             cb_imp.handle_event(MouseEventType::Move, evt.x(), evt.y());
         });
         canvas.set_onmousemove(Some(mouse_move_closure.as_ref().unchecked_ref()));
-        
+
         // Touch start
         imp_ref = imp.clone();
         let touch_start_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
@@ -99,7 +103,7 @@ impl MouseManager {
                                    "touchstart",
                                    touch_start_closure.as_ref().unchecked_ref(),
                                    false).expect("touchstart");
-        
+
         // Touch end
         imp_ref = imp.clone();
         let touch_end_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |_: TouchEvent| {
@@ -116,7 +120,7 @@ impl MouseManager {
                                    "touchcancel",
                                    touch_end_closure.as_ref().unchecked_ref(),
                                    false).expect("touchcancel");
-        
+
         imp_ref = imp.clone();
         let touch_move_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
             let cb_imp = &mut *imp_ref.borrow_mut();
@@ -129,7 +133,7 @@ impl MouseManager {
                                    "touchmove",
                                    touch_move_closure.as_ref().unchecked_ref(),
                                    false).expect("touchmove");
-        
+
         // Make 'document' ignore touch events over the canvas to prevent the screen from scrolling
         let document_touch_closure = Closure::<dyn FnMut(TouchEvent)>::new(move |evt: TouchEvent| {
             if let Some(tgt) =  evt.target() {
@@ -169,11 +173,38 @@ impl MouseManager {
             _document_touch_closure: document_touch_closure,
         }
     }
-    
+
+    pub fn post_think(&self) {
+        (*self.imp).borrow_mut().click_pos = None;
+    }
+
     pub fn is_down(&self) -> bool {
         (*self.imp).borrow().is_down
     }
     pub fn pos(&self) -> Pos2d {
         (*self.imp).borrow().pos
     }
+
+    // Return 'true' if the mouse is currently 'down' within the rectangle defined by the
+    // specified upper-left 'pos', and 'width' and 'height'.
+    pub fn is_down_in_rect(&self, pos: &Pos2d, width: f64, height: f64) -> bool {
+        let imp = &*(*self.imp).borrow();
+        let mpos =  imp.pos;
+
+        imp.is_down &&
+        mpos.x > pos.x && mpos.x < (pos.x + width) &&
+        mpos.y > pos.y && mpos.y < (pos.y + height)
+    }
+
+    // Return 'true' if a click was recorded in the last frame in the rectangle defined by
+    // the specified 'pos', 'width' and 'height'
+    pub fn is_click_in_rect(&self, pos: &Pos2d, width: f64, height: f64) -> bool {
+        if let Some(click_pos) = (*self.imp).borrow().click_pos {
+            return click_pos.x > pos.x && click_pos.x < (pos.x + width) &&
+                   click_pos.y > pos.y && click_pos.y < (pos.y + height);
+        }
+
+        false
+    }
+
 }

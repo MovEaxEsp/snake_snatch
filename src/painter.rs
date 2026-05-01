@@ -84,7 +84,6 @@ impl Painter {
         advance_color(&mut self.keyword_b, elapsed_time);
     }
 
-    /*
     pub fn set_global_alpha(&self, alpha: f64) {
         self.canvas.set_global_alpha(alpha);
     }
@@ -121,6 +120,7 @@ impl Painter {
         c.set_global_alpha(1.0);
     }
 
+    /*
     pub fn draw_progress_bar(&self, pos: &Pos2d, pct: f64, cfg: &ProgressBarConfig) {
         self.draw_area_background(pos, &cfg.bg);
 
@@ -139,7 +139,7 @@ impl Painter {
         self.canvas.set_global_alpha(1.0);
     }
 
-    
+
     pub fn draw_ring(&self, pos: &Pos2d, r1: f64, r2: f64, rad1: f64, rad2: f64, cfg: &RingConfig)
     {
         let c = &self.canvas;
@@ -213,7 +213,7 @@ impl Painter {
                 self.canvas.fill_text(text, xpos, ypos).expect("text");
             });
         }
-    
+
         let mut drawn = false;
         if cfg.is_command {
             if self.entered_keywords.iter().find(|x| *x == text).is_some() {
